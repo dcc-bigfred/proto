@@ -7,7 +7,18 @@
 use heapless::{String, Vec};
 
 /// Bytes the firmware writes onto the TCP socket.
-pub type WireBuf = Vec<u8, 256>;
+pub const WIRE_BUF_LEN: usize = 256;
+pub type WireBuf = Vec<u8, WIRE_BUF_LEN>;
+
+const HANDSHAKE_MAX: usize = 4 + 32 + 1 + 3 + 32 + 1 + 3;
+const _: () = assert!(WIRE_BUF_LEN >= HANDSHAKE_MAX);
+
+/// Encode error.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Error {
+    /// `WireBuf` has no remaining capacity.
+    BufferFull,
+}
 
 /// Outgoing MultiThrottle / handshake command.
 #[derive(Clone, Copy, Debug)]
@@ -53,15 +64,17 @@ impl Client {
     }
 
     /// `N` / `HU` / `*+` after TCP connect.
-    pub fn on_connect(&mut self, out: &mut WireBuf) {
+    pub fn on_connect(&mut self, out: &mut WireBuf) -> Result<(), Error> {
         out.clear();
-        let _ = push_line(out, b"N");
-        let _ = out.extend_from_slice(self.name.as_bytes());
-        let _ = out.push(b'\n');
-        let _ = push_line(out, b"HU");
-        let _ = out.extend_from_slice(self.id.as_bytes());
-        let _ = out.push(b'\n');
-        let _ = push_line(out, b"*+\n");
+        push_line(out, b"N")?;
+        out.extend_from_slice(self.name.as_bytes())
+            .map_err(|_| Error::BufferFull)?;
+        out.push(b'\n').map_err(|_| Error::BufferFull)?;
+        push_line(out, b"HU")?;
+        out.extend_from_slice(self.id.as_bytes())
+            .map_err(|_| Error::BufferFull)?;
+        out.push(b'\n').map_err(|_| Error::BufferFull)?;
+        push_line(out, b"*+\n")
     }
 
     /// Parse inbound bytes, emitting complete lines.
@@ -77,7 +90,7 @@ impl Client {
     }
 
     /// Encode one command (appended, each line LF-terminated).
-    pub fn encode(&self, cmd: &Command, out: &mut WireBuf) -> Result<(), ()> {
+    pub fn encode(&self, cmd: &Command, out: &mut WireBuf) -> Result<(), Error> {
         match *cmd {
             Command::Handshake => {
                 let mut tmp = WireBuf::new();
@@ -86,8 +99,8 @@ impl Client {
                     id: self.id.clone(),
                     line: String::new(),
                 };
-                c.on_connect(&mut tmp);
-                out.extend_from_slice(&tmp).map_err(|_| ())
+                c.on_connect(&mut tmp)?;
+                out.extend_from_slice(&tmp).map_err(|_| Error::BufferFull)
             }
             Command::Acquire { addr } => encode_acquire(out, addr),
             Command::SetSpeed { addr, speed } => encode_action(out, addr, b'V', speed),
@@ -98,14 +111,14 @@ impl Client {
             Command::SetFunction { addr, func, on } => encode_function(out, addr, func, on),
             Command::TrackPower { on } => {
                 let line = if on { b"PPA1\n".as_slice() } else { b"PPA0\n".as_slice() };
-                out.extend_from_slice(line).map_err(|_| ())
+                out.extend_from_slice(line).map_err(|_| Error::BufferFull)
             }
         }
     }
 }
 
-fn push_line(out: &mut WireBuf, prefix: &[u8]) -> Result<(), ()> {
-    out.extend_from_slice(prefix).map_err(|_| ())
+fn push_line(out: &mut WireBuf, prefix: &[u8]) -> Result<(), Error> {
+    out.extend_from_slice(prefix).map_err(|_| Error::BufferFull)
 }
 
 fn loco_key(addr: u16, s: &mut String<8>) {
@@ -132,40 +145,40 @@ fn push_u16<const N: usize>(s: &mut String<N>, mut n: u16) {
     }
 }
 
-fn encode_acquire(out: &mut WireBuf, addr: u16) -> Result<(), ()> {
+fn encode_acquire(out: &mut WireBuf, addr: u16) -> Result<(), Error> {
     let mut key = String::<8>::new();
     loco_key(addr, &mut key);
-    out.extend_from_slice(b"M0+").map_err(|_| ())?;
-    out.extend_from_slice(key.as_bytes()).map_err(|_| ())?;
-    out.extend_from_slice(b"<;>").map_err(|_| ())?;
-    out.extend_from_slice(key.as_bytes()).map_err(|_| ())?;
-    out.push(b'\n').map_err(|_| ())
+    out.extend_from_slice(b"M0+").map_err(|_| Error::BufferFull)?;
+    out.extend_from_slice(key.as_bytes()).map_err(|_| Error::BufferFull)?;
+    out.extend_from_slice(b"<;>").map_err(|_| Error::BufferFull)?;
+    out.extend_from_slice(key.as_bytes()).map_err(|_| Error::BufferFull)?;
+    out.push(b'\n').map_err(|_| Error::BufferFull)
 }
 
-fn encode_action(out: &mut WireBuf, addr: u16, letter: u8, value: u8) -> Result<(), ()> {
+fn encode_action(out: &mut WireBuf, addr: u16, letter: u8, value: u8) -> Result<(), Error> {
     let mut key = String::<8>::new();
     loco_key(addr, &mut key);
-    out.extend_from_slice(b"M0A").map_err(|_| ())?;
-    out.extend_from_slice(key.as_bytes()).map_err(|_| ())?;
-    out.extend_from_slice(b"<;>").map_err(|_| ())?;
-    out.push(letter).map_err(|_| ())?;
+    out.extend_from_slice(b"M0A").map_err(|_| Error::BufferFull)?;
+    out.extend_from_slice(key.as_bytes()).map_err(|_| Error::BufferFull)?;
+    out.extend_from_slice(b"<;>").map_err(|_| Error::BufferFull)?;
+    out.push(letter).map_err(|_| Error::BufferFull)?;
     let mut num = String::<8>::new();
     push_u16(&mut num, u16::from(value));
-    out.extend_from_slice(num.as_bytes()).map_err(|_| ())?;
-    out.push(b'\n').map_err(|_| ())
+    out.extend_from_slice(num.as_bytes()).map_err(|_| Error::BufferFull)?;
+    out.push(b'\n').map_err(|_| Error::BufferFull)
 }
 
-fn encode_function(out: &mut WireBuf, addr: u16, func: u8, on: bool) -> Result<(), ()> {
+fn encode_function(out: &mut WireBuf, addr: u16, func: u8, on: bool) -> Result<(), Error> {
     let mut key = String::<8>::new();
     loco_key(addr, &mut key);
-    out.extend_from_slice(b"M0A").map_err(|_| ())?;
-    out.extend_from_slice(key.as_bytes()).map_err(|_| ())?;
-    out.extend_from_slice(b"<;>f").map_err(|_| ())?;
-    out.push(if on { b'1' } else { b'0' }).map_err(|_| ())?;
+    out.extend_from_slice(b"M0A").map_err(|_| Error::BufferFull)?;
+    out.extend_from_slice(key.as_bytes()).map_err(|_| Error::BufferFull)?;
+    out.extend_from_slice(b"<;>f").map_err(|_| Error::BufferFull)?;
+    out.push(if on { b'1' } else { b'0' }).map_err(|_| Error::BufferFull)?;
     let mut num = String::<8>::new();
     push_u16(&mut num, u16::from(func));
-    out.extend_from_slice(num.as_bytes()).map_err(|_| ())?;
-    out.push(b'\n').map_err(|_| ())
+    out.extend_from_slice(num.as_bytes()).map_err(|_| Error::BufferFull)?;
+    out.push(b'\n').map_err(|_| Error::BufferFull)
 }
 
 /// True if `line` is a MultiThrottle command (`M…`).
@@ -253,47 +266,63 @@ fn parse_loco_key(s: &str) -> Option<u16> {
     digits.parse().ok()
 }
 
-/// Encode helpers used by tests (no trailing newline — matches testdata hex).
-pub fn encode_line_acquire(addr: u16, out: &mut WireBuf) -> Result<(), ()> {
+/// Encode helpers used by tests (no trailing newline — matches testdata line).
+pub fn encode_line_acquire(addr: u16, out: &mut WireBuf) -> Result<(), Error> {
     let mut key = String::<8>::new();
     loco_key(addr, &mut key);
-    out.extend_from_slice(b"M0+").map_err(|_| ())?;
-    out.extend_from_slice(key.as_bytes()).map_err(|_| ())?;
-    out.extend_from_slice(b"<;>").map_err(|_| ())?;
-    out.extend_from_slice(key.as_bytes()).map_err(|_| ())
+    out.extend_from_slice(b"M0+").map_err(|_| Error::BufferFull)?;
+    out.extend_from_slice(key.as_bytes()).map_err(|_| Error::BufferFull)?;
+    out.extend_from_slice(b"<;>").map_err(|_| Error::BufferFull)?;
+    out.extend_from_slice(key.as_bytes()).map_err(|_| Error::BufferFull)
 }
 
-pub fn encode_line_speed(addr: u16, speed: u8, out: &mut WireBuf) -> Result<(), ()> {
+pub fn encode_line_speed(addr: u16, speed: u8, out: &mut WireBuf) -> Result<(), Error> {
     encode_action_raw(out, addr, b'V', speed)
 }
 
-pub fn encode_line_dir(addr: u16, forward: bool, out: &mut WireBuf) -> Result<(), ()> {
+pub fn encode_line_dir(addr: u16, forward: bool, out: &mut WireBuf) -> Result<(), Error> {
     encode_action_raw(out, addr, b'R', u8::from(forward))
 }
 
-pub fn encode_line_fn(addr: u16, func: u8, on: bool, out: &mut WireBuf) -> Result<(), ()> {
+pub fn encode_line_fn(addr: u16, func: u8, on: bool, out: &mut WireBuf) -> Result<(), Error> {
     let mut tmp = WireBuf::new();
     encode_function(&mut tmp, addr, func, on)?;
     if tmp.last() == Some(&b'\n') {
         tmp.pop();
     }
-    out.extend_from_slice(&tmp).map_err(|_| ())
+    out.extend_from_slice(&tmp).map_err(|_| Error::BufferFull)
 }
 
-fn encode_action_raw(out: &mut WireBuf, addr: u16, letter: u8, value: u8) -> Result<(), ()> {
+fn encode_action_raw(out: &mut WireBuf, addr: u16, letter: u8, value: u8) -> Result<(), Error> {
     let mut tmp = WireBuf::new();
     encode_action(&mut tmp, addr, letter, value)?;
     if tmp.last() == Some(&b'\n') {
         tmp.pop();
     }
-    out.extend_from_slice(&tmp).map_err(|_| ())
+    out.extend_from_slice(&tmp).map_err(|_| Error::BufferFull)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde::Deserialize;
     use std::fs;
     use std::path::PathBuf;
+
+    #[derive(Deserialize)]
+    struct Vectors {
+        cases: std::vec::Vec<Case>,
+    }
+
+    #[derive(Deserialize)]
+    struct Case {
+        id: std::string::String,
+        #[serde(default)]
+        hex: std::string::String,
+        #[serde(default)]
+        line: std::string::String,
+        op: std::string::String,
+    }
 
     fn testdata(rel: &str) -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -314,12 +343,24 @@ mod tests {
         out
     }
 
-    fn json_field(obj: &str, key: &str) -> Option<std::string::String> {
-        let pat = format!("\"{key}\": \"");
-        let i = obj.find(&pat)?;
-        let rest = &obj[i + pat.len()..];
-        let end = rest.find('"')?;
-        Some(rest[..end].to_string())
+    fn wire(c: &Case) -> Vec<u8, 64> {
+        assert!(
+            c.line.is_empty() ^ c.hex.is_empty(),
+            "{}: set exactly one of line or hex",
+            c.id
+        );
+        if !c.line.is_empty() {
+            let mut out = Vec::new();
+            out.extend_from_slice(c.line.as_bytes()).unwrap();
+            out
+        } else {
+            decode_hex(&c.hex)
+        }
+    }
+
+    fn load(rel: &str) -> Vectors {
+        let raw = fs::read_to_string(testdata(rel)).expect(rel);
+        serde_json::from_str(&raw).expect("json")
     }
 
     #[test]
@@ -341,20 +382,10 @@ mod tests {
 
     #[test]
     fn lines_match_go_vectors() {
-        let raw = fs::read_to_string(testdata("withrottle/lines.json")).expect("lines.json");
-        for obj in raw.split('{') {
-            if !obj.contains("\"hex\"") {
-                continue;
-            }
-            let Some(id) = json_field(obj, "id") else {
-                continue;
-            };
-            let Some(hex) = json_field(obj, "hex") else {
-                continue;
-            };
-            let want = decode_hex(&hex);
+        for c in load("withrottle/lines.json").cases {
+            let want = wire(&c);
             let mut out = WireBuf::new();
-            match id.as_str() {
+            match c.id.as_str() {
                 "hu" => out.extend_from_slice(b"HUproto").unwrap(),
                 "acquire_s3" => encode_line_acquire(3, &mut out).unwrap(),
                 "set_speed_50" => encode_line_speed(3, 50, &mut out).unwrap(),
@@ -363,7 +394,20 @@ mod tests {
                 "track_power_on" => out.extend_from_slice(b"PPA1").unwrap(),
                 _ => continue,
             }
-            assert_eq!(out.as_slice(), want.as_slice(), "{id}");
+            assert_eq!(out.as_slice(), want.as_slice(), "{}", c.id);
+        }
+    }
+
+    #[test]
+    fn function_press_vectors_parse() {
+        for c in load("withrottle/function_press.json").cases {
+            let raw = wire(&c);
+            let line = core::str::from_utf8(raw.as_slice()).unwrap();
+            assert!(is_multithrottle_line(line.as_bytes()), "{}", c.id);
+            match c.op.as_str() {
+                "press" | "release" | "force" | "mode" => {}
+                other => panic!("unexpected op {other}"),
+            }
         }
     }
 }

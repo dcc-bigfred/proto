@@ -8,7 +8,19 @@
 use heapless::Vec;
 
 /// Output buffer the firmware writes onto the UDP socket.
-pub type WireBuf = Vec<u8, 256>;
+pub const WIRE_BUF_LEN: usize = 256;
+pub type WireBuf = Vec<u8, WIRE_BUF_LEN>;
+
+const SERIAL_LEN: usize = 4;
+const BCFLAGS_LEN: usize = 8;
+const _: () = assert!(WIRE_BUF_LEN >= SERIAL_LEN + BCFLAGS_LEN);
+
+/// Encode error.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Error {
+    /// `WireBuf` has no remaining capacity.
+    BufferFull,
+}
 
 /// LAN headers (little-endian uint16 at bytes 2–3).
 pub const HEADER_GET_SERIAL: u16 = 0x0010;
@@ -122,28 +134,28 @@ pub fn decode_drive_from_loco_info(db2: u8, db3: u8) -> (u8, bool) {
     }
 }
 
-fn put_lan(out: &mut WireBuf, header: u16, data: &[u8]) -> Result<(), ()> {
+fn put_lan(out: &mut WireBuf, header: u16, data: &[u8]) -> Result<(), Error> {
     let len = (4 + data.len()) as u16;
-    out.extend_from_slice(&len.to_le_bytes()).map_err(|_| ())?;
-    out.extend_from_slice(&header.to_le_bytes()).map_err(|_| ())?;
-    out.extend_from_slice(data).map_err(|_| ())?;
+    out.extend_from_slice(&len.to_le_bytes()).map_err(|_| Error::BufferFull)?;
+    out.extend_from_slice(&header.to_le_bytes()).map_err(|_| Error::BufferFull)?;
+    out.extend_from_slice(data).map_err(|_| Error::BufferFull)?;
     Ok(())
 }
 
-fn put_xbus(out: &mut WireBuf, payload: &[u8]) -> Result<(), ()> {
+fn put_xbus(out: &mut WireBuf, payload: &[u8]) -> Result<(), Error> {
     let mut tmp: Vec<u8, 32> = Vec::new();
-    tmp.extend_from_slice(payload).map_err(|_| ())?;
-    tmp.push(xor_sum(payload)).map_err(|_| ())?;
+    tmp.extend_from_slice(payload).map_err(|_| Error::BufferFull)?;
+    tmp.push(xor_sum(payload)).map_err(|_| Error::BufferFull)?;
     put_lan(out, HEADER_XBUS, &tmp)
 }
 
 /// LAN_GET_SERIAL_NUMBER.
-pub fn encode_get_serial(out: &mut WireBuf) -> Result<(), ()> {
+pub fn encode_get_serial(out: &mut WireBuf) -> Result<(), Error> {
     put_lan(out, HEADER_GET_SERIAL, &[])
 }
 
 /// LAN_SET_BROADCASTFLAGS.
-pub fn encode_broadcast_flags(out: &mut WireBuf, flags: u32) -> Result<(), ()> {
+pub fn encode_broadcast_flags(out: &mut WireBuf, flags: u32) -> Result<(), Error> {
     put_lan(out, HEADER_SET_BROADCAST, &flags.to_le_bytes())
 }
 
@@ -154,7 +166,7 @@ pub fn encode_set_drive(
     speed: u8,
     forward: bool,
     steps: u8,
-) -> Result<(), ()> {
+) -> Result<(), Error> {
     let (msb, lsb) = addr_bytes(addr);
     let mut s = steps & 0x0F;
     if s == 4 || steps == 128 {
@@ -170,7 +182,7 @@ pub fn encode_set_drive(
 }
 
 /// LAN_X_SET_LOCO_FUNCTION.
-pub fn encode_set_function(out: &mut WireBuf, addr: u16, func: u8, on: bool) -> Result<(), ()> {
+pub fn encode_set_function(out: &mut WireBuf, addr: u16, func: u8, on: bool) -> Result<(), Error> {
     let (msb, lsb) = addr_bytes(addr);
     let mut type_bits = 0u8;
     if on {
@@ -181,13 +193,13 @@ pub fn encode_set_function(out: &mut WireBuf, addr: u16, func: u8, on: bool) -> 
 }
 
 /// LAN_X_GET_LOCO_INFO.
-pub fn encode_get_loco_info(out: &mut WireBuf, addr: u16) -> Result<(), ()> {
+pub fn encode_get_loco_info(out: &mut WireBuf, addr: u16) -> Result<(), Error> {
     let (msb, lsb) = addr_bytes(addr);
     put_xbus(out, &[0xE3, 0xF0, msb, lsb])
 }
 
 /// LAN_X_SET_TRACK_POWER_*.
-pub fn encode_track_power(out: &mut WireBuf, on: bool) -> Result<(), ()> {
+pub fn encode_track_power(out: &mut WireBuf, on: bool) -> Result<(), Error> {
     let db0 = if on { 0x81 } else { 0x80 };
     put_xbus(out, &[0x21, db0])
 }
@@ -302,6 +314,41 @@ pub fn parse_loco_info(pkt: &[u8]) -> Option<LocoInfo> {
     })
 }
 
+/// Parse LAN_X_SET_LOCO_FUNCTION_GROUP. `bits` LSB is function `lo`.
+#[must_use]
+pub fn parse_set_loco_function_group(pkt: &[u8]) -> Option<(u16, u8, u8, u32)> {
+    if pkt.len() < 10 || !valid_frame(pkt) {
+        return None;
+    }
+    let header = u16::from_le_bytes([pkt[2], pkt[3]]);
+    if header != HEADER_XBUS || pkt[4] != 0xE4 {
+        return None;
+    }
+    let addr = parse_addr(pkt, 6)?;
+    let raw = pkt[8];
+    let (lo, hi, bits) = match pkt[5] {
+        0x20 => {
+            let mut bits = 0u32;
+            if raw & 0x10 != 0 {
+                bits |= 1;
+            }
+            for i in 0..4u32 {
+                if raw & (1 << i) != 0 {
+                    bits |= 1 << (i + 1);
+                }
+            }
+            (0, 4, bits)
+        }
+        0x21 => (5, 8, u32::from(raw & 0x0F)),
+        0x22 => (9, 12, u32::from(raw & 0x0F)),
+        0x23 => (13, 20, u32::from(raw)),
+        0x28 => (21, 28, u32::from(raw)),
+        0x29 => (29, 31, u32::from(raw & 0x07)),
+        _ => return None,
+    };
+    Some((addr, lo, hi, bits))
+}
+
 /// Build LAN_X_LOCO_INFO (used by tests / dummy server).
 pub fn encode_loco_info(
     out: &mut WireBuf,
@@ -310,7 +357,7 @@ pub fn encode_loco_info(
     forward: bool,
     steps: u8,
     functions: u32,
-) -> Result<(), ()> {
+) -> Result<(), Error> {
     let (msb, lsb) = addr_bytes(addr);
     let db2 = match steps {
         14 | 0 => 0,
@@ -370,10 +417,10 @@ impl Client {
     }
 
     /// Bytes to send after the UDP socket is ready (serial probe + broadcast flags).
-    pub fn on_connect(&mut self, out: &mut WireBuf) {
+    pub fn on_connect(&mut self, out: &mut WireBuf) -> Result<(), Error> {
         out.clear();
-        let _ = encode_get_serial(out);
-        let _ = encode_broadcast_flags(out, 0x0001_0001);
+        encode_get_serial(out)?;
+        encode_broadcast_flags(out, 0x0001_0001)
     }
 
     /// Parse inbound datagrams.
@@ -396,7 +443,7 @@ impl Client {
     }
 
     /// Encode one command into `out` (appended).
-    pub fn encode(&self, cmd: &Command, out: &mut WireBuf) -> Result<(), ()> {
+    pub fn encode(&self, cmd: &Command, out: &mut WireBuf) -> Result<(), Error> {
         match *cmd {
             Command::SetSpeed {
                 addr,
@@ -414,8 +461,23 @@ impl Client {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde::Deserialize;
     use std::fs;
     use std::path::PathBuf;
+
+    #[derive(Deserialize)]
+    struct Vectors {
+        cases: std::vec::Vec<Case>,
+    }
+
+    #[derive(Deserialize)]
+    struct Case {
+        id: std::string::String,
+        hex: std::string::String,
+        op: std::string::String,
+        #[serde(default)]
+        fields: serde_json::Value,
+    }
 
     fn testdata(rel: &str) -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -436,6 +498,11 @@ mod tests {
         out
     }
 
+    fn load(rel: &str) -> Vectors {
+        let raw = fs::read_to_string(testdata(rel)).expect(rel);
+        serde_json::from_str(&raw).expect("json")
+    }
+
     #[test]
     fn xor_sum_xbus_example() {
         assert_eq!(xor_sum(&[0x21, 0x24]), 0x05);
@@ -448,16 +515,15 @@ mod tests {
 
     #[test]
     fn frames_match_go_vectors() {
-        let raw = fs::read_to_string(testdata("z21/frames.json")).expect("frames.json");
-        for (id, hex, op) in parse_cases(&raw) {
-            let want = decode_hex(&hex);
+        for c in load("z21/frames.json").cases {
+            let want = decode_hex(&c.hex);
             let mut out = WireBuf::new();
-            match op.as_str() {
+            match c.op.as_str() {
                 "get_serial" => encode_get_serial(&mut out).unwrap(),
-                "set_drive" if id == "set_drive_3_50_fwd_128" => {
+                "set_drive" if c.id == "set_drive_3_50_fwd_128" => {
                     encode_set_drive(&mut out, 3, 50, true, 3).unwrap();
                 }
-                "set_drive" if id == "set_drive_stop_fwd" => {
+                "set_drive" if c.id == "set_drive_stop_fwd" => {
                     encode_set_drive(&mut out, 3, 0, true, 3).unwrap();
                 }
                 "set_function" => encode_set_function(&mut out, 3, 0, true).unwrap(),
@@ -467,8 +533,8 @@ mod tests {
                 }
                 _ => continue,
             }
-            assert_eq!(out.as_slice(), want.as_slice(), "{id}");
-            if op == "loco_info" {
+            assert_eq!(out.as_slice(), want.as_slice(), "{}", c.id);
+            if c.op == "loco_info" {
                 let info = parse_loco_info(out.as_slice()).expect("parse");
                 assert_eq!(info.addr, 3);
                 assert_eq!(info.speed, 50);
@@ -478,31 +544,15 @@ mod tests {
         }
     }
 
-    fn parse_cases(json: &str) -> Vec<(std::string::String, std::string::String, std::string::String), 16> {
-        let mut out = Vec::new();
-        for obj in json.split('{') {
-            if !obj.contains("\"hex\"") {
-                continue;
-            }
-            let Some(id) = json_field(obj, "id") else {
-                continue;
-            };
-            let Some(hex) = json_field(obj, "hex") else {
-                continue;
-            };
-            let Some(op) = json_field(obj, "op") else {
-                continue;
-            };
-            let _ = out.push((id, hex, op));
+    #[test]
+    fn function_group_parse() {
+        for c in load("z21/function_group.json").cases {
+            let pkt = decode_hex(&c.hex);
+            let (addr, lo, hi, bits) = parse_set_loco_function_group(pkt.as_slice()).expect(&c.id);
+            assert_eq!(addr, c.fields["addr"].as_u64().unwrap() as u16, "{}", c.id);
+            assert_eq!(lo, c.fields["lo"].as_u64().unwrap() as u8, "{}", c.id);
+            assert_eq!(hi, c.fields["hi"].as_u64().unwrap() as u8, "{}", c.id);
+            assert_eq!(bits, c.fields["bits"].as_u64().unwrap() as u32, "{}", c.id);
         }
-        out
-    }
-
-    fn json_field(obj: &str, key: &str) -> Option<std::string::String> {
-        let pat = format!("\"{key}\": \"");
-        let i = obj.find(&pat)?;
-        let rest = &obj[i + pat.len()..];
-        let end = rest.find('"')?;
-        Some(rest[..end].to_string())
     }
 }

@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -36,7 +37,9 @@ func run() error {
 	}{
 		{filepath.Join(td, "loconet", "gpon.json"), loconetCases()},
 		{filepath.Join(td, "z21", "frames.json"), z21Cases()},
+		{filepath.Join(td, "z21", "function_group.json"), z21FunctionGroupCases()},
 		{filepath.Join(td, "withrottle", "lines.json"), withrottleCases()},
+		{filepath.Join(td, "withrottle", "function_press.json"), withrottlePressCases()},
 	}
 	for _, w := range writes {
 		if err := write(w.path, w.file); err != nil {
@@ -58,12 +61,14 @@ func write(path string, f vectors.File) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	b, err := json.MarshalIndent(f, "", "  ")
-	if err != nil {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetIndent("", "  ")
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(f); err != nil {
 		return err
 	}
-	b = append(b, '\n')
-	return os.WriteFile(path, b, 0o644)
+	return os.WriteFile(path, buf.Bytes(), 0o644)
 }
 
 func hx(b []byte) string { return hex.EncodeToString(b) }
@@ -132,23 +137,71 @@ func z21Cases() vectors.File {
 }
 
 func withrottleCases() vectors.File {
-	line := func(s string) string { return hx([]byte(s)) }
 	cases := []vectors.Case{
-		{ID: "hu", Hex: line("HUproto"), Op: "hu"},
-		{ID: "acquire_s3", Hex: line("M0+S3<;>S3"), Op: "acquire", Fields: fields(map[string]any{"addr": 3})},
-		{ID: "set_speed_50", Hex: line("M0AS3<;>V50"), Op: "set_speed", Fields: fields(map[string]any{"addr": 3, "speed": 50})},
-		{ID: "set_dir_fwd", Hex: line("M0AS3<;>R1"), Op: "set_direction", Fields: fields(map[string]any{"addr": 3, "forward": true})},
-		{ID: "set_fn_f0_on", Hex: line("M0AS3<;>f10"), Op: "set_function", Fields: fields(map[string]any{"addr": 3, "fn": 0, "on": true})},
-		{ID: "track_power_on", Hex: line("PPA1"), Op: "track_power", Fields: fields(map[string]any{"on": true})},
+		{ID: "hu", Line: "HUproto", Op: "hu"},
+		{ID: "acquire_s3", Line: "M0+S3<;>S3", Op: "acquire", Fields: fields(map[string]any{"addr": 3})},
+		{ID: "set_speed_50", Line: "M0AS3<;>V50", Op: "set_speed", Fields: fields(map[string]any{"addr": 3, "speed": 50})},
+		{ID: "set_dir_fwd", Line: "M0AS3<;>R1", Op: "set_direction", Fields: fields(map[string]any{"addr": 3, "forward": true})},
+		{ID: "set_fn_f0_on", Line: "M0AS3<;>f10", Op: "set_function", Fields: fields(map[string]any{"addr": 3, "fn": 0, "on": true})},
+		{ID: "track_power_on", Line: "PPA1", Op: "track_power", Fields: fields(map[string]any{"on": true})},
 	}
 	for _, c := range cases {
 		if c.Op == "hu" || c.Op == "track_power" {
 			continue
 		}
-		raw, _ := hex.DecodeString(c.Hex)
-		if _, ok := withrottle.ParseM(string(raw)); !ok {
+		if _, ok := withrottle.ParseM(c.Line); !ok {
 			panic("generated line is not a MultiThrottle command: " + c.ID)
 		}
 	}
 	return vectors.File{Cases: cases}
+}
+
+func z21FunctionGroupCases() vectors.File {
+	return vectors.File{Cases: []vectors.Case{
+		{
+			ID:     "group1_f0_f1",
+			Hex:    hx(z21.BuildSetLocoFunctionGroup(3, 0x20, 0x03)),
+			Op:     "set_function_group",
+			Fields: fields(map[string]any{"addr": 3, "db0": 0x20, "lo": 0, "hi": 4, "bits": 3}),
+		},
+		{
+			ID:     "group2_f5",
+			Hex:    hx(z21.BuildSetLocoFunctionGroup(3, 0x21, 0x01)),
+			Op:     "set_function_group",
+			Fields: fields(map[string]any{"addr": 3, "db0": 0x21, "lo": 5, "hi": 8, "bits": 1}),
+		},
+		{
+			ID:     "group3_f9_f12",
+			Hex:    hx(z21.BuildSetLocoFunctionGroup(3, 0x22, 0x0F)),
+			Op:     "set_function_group",
+			Fields: fields(map[string]any{"addr": 3, "db0": 0x22, "lo": 9, "hi": 12, "bits": 15}),
+		},
+		{
+			ID:     "group4_f13",
+			Hex:    hx(z21.BuildSetLocoFunctionGroup(3, 0x23, 0x01)),
+			Op:     "set_function_group",
+			Fields: fields(map[string]any{"addr": 3, "db0": 0x23, "lo": 13, "hi": 20, "bits": 1}),
+		},
+		{
+			ID:     "group5_f21",
+			Hex:    hx(z21.BuildSetLocoFunctionGroup(3, 0x28, 0x01)),
+			Op:     "set_function_group",
+			Fields: fields(map[string]any{"addr": 3, "db0": 0x28, "lo": 21, "hi": 28, "bits": 1}),
+		},
+		{
+			ID:     "group6_f29",
+			Hex:    hx(z21.BuildSetLocoFunctionGroup(3, 0x29, 0x01)),
+			Op:     "set_function_group",
+			Fields: fields(map[string]any{"addr": 3, "db0": 0x29, "lo": 29, "hi": 31, "bits": 1}),
+		},
+	}}
+}
+
+func withrottlePressCases() vectors.File {
+	return vectors.File{Cases: []vectors.Case{
+		{ID: "press_f1", Line: "M0AS3<;>F11", Op: "press", Fields: fields(map[string]any{"addr": 3, "fn": 1, "pressed": true})},
+		{ID: "release_f1", Line: "M0AS3<;>F01", Op: "release", Fields: fields(map[string]any{"addr": 3, "fn": 1, "pressed": false})},
+		{ID: "force_f0_on", Line: "M0AS3<;>f10", Op: "force", Fields: fields(map[string]any{"addr": 3, "fn": 0, "on": true})},
+		{ID: "mode_f2_momentary", Line: "M0AS3<;>m12", Op: "mode", Fields: fields(map[string]any{"addr": 3, "fn": 2, "momentary": true})},
+	}}
 }

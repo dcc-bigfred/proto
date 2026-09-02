@@ -96,6 +96,34 @@ func TestLocoNetTCPAutodetection(t *testing.T) {
 	}
 }
 
+func TestWiThrottleAutodetection(t *testing.T) {
+	open := map[string]bool{
+		"192.168.0.15:12090": true,
+	}
+	dial := func(_ context.Context, address string) (net.Conn, error) {
+		if !open[address] {
+			return nil, errors.New("refused")
+		}
+		c1, c2 := net.Pipe()
+		_ = c2.Close()
+		return c1, nil
+	}
+
+	got, err := collectScan(context.Background(), WiThrottleAutodetection{
+		SubnetPrefix: "192.168.0",
+		Dial:         dial,
+	})
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	if len(got) != 1 || got[0].URI != "withrottle://192.168.0.15:12090" {
+		t.Fatalf("got %+v", got)
+	}
+	if got[0].Name != "WiThrottle 192.168.0.15:12090" {
+		t.Fatalf("name %q", got[0].Name)
+	}
+}
+
 func TestZ21AutodetectionPreferredHost(t *testing.T) {
 	probed := make([]string, 0)
 	probe := func(_ context.Context, address string, _ []byte) error {

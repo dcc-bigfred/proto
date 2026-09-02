@@ -1,0 +1,76 @@
+{
+  "cases": [
+    {
+      "id": "group1_f0_f1",
+      "hex": "0a004000e420000311d6",
+      "op": "set_function_group",
+      "fields": {
+        "addr": 3,
+        "bits": 3,
+        "db0": 32,
+        "hi": 4,
+        "lo": 0
+      }
+    },
+    {
+      "id": "group2_f5",
+      "hex": "0a004000e421000301c7",
+      "op": "set_function_group",
+      "fields": {
+        "addr": 3,
+        "bits": 1,
+        "db0": 33,
+        "hi": 8,
+        "lo": 5
+      }
+    },
+    {
+      "id": "group3_f9_f12",
+      "hex": "0a004000e42200030fca",
+      "op": "set_function_group",
+      "fields": {
+        "addr": 3,
+        "bits": 15,
+        "db0": 34,
+        "hi": 12,
+        "lo": 9
+      }
+    },
+    {
+      "id": "group4_f13",
+      "hex": "0a004000e423000301c5",
+      "op": "set_function_group",
+      "fields": {
+        "addr": 3,
+        "bits": 1,
+        "db0": 35,
+        "hi": 20,
+        "lo": 13
+      }
+    },
+    {
+      "id": "group5_f21",
+      "hex": "0a004000e428000301ce",
+      "op": "set_function_group",
+      "fields": {
+        "addr": 3,
+        "bits": 1,
+        "db0": 40,
+        "hi": 28,
+        "lo": 21
+      }
+    },
+    {
+      "id": "group6_f29",
+      "hex": "0a004000e429000301cf",
+      "op": "set_function_group",
+      "fields": {
+        "addr": 3,
+        "bits": 1,
+        "db0": 41,
+        "hi": 31,
+        "lo": 29
+      }
+    }
+  ]
+}

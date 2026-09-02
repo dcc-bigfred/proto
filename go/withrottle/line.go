@@ -86,26 +86,42 @@ func LocoKey(addr uint16) string {
 	return "S" + strconv.Itoa(int(addr))
 }
 
-func parseFunctionAction(prop string) (fn int, on bool, force bool, ok bool) {
+func parseFnDigits(prop string) (fn int, bit bool, ok bool) {
 	if len(prop) < 2 {
-		return 0, false, false, false
-	}
-	switch prop[0] {
-	case 'F':
-	case 'f':
-		force = true
-	default:
-		return 0, false, false, false
+		return 0, false, false
 	}
 	if prop[1] != '0' && prop[1] != '1' {
-		return 0, false, false, false
+		return 0, false, false
 	}
-	on = prop[1] == '1'
 	n, err := strconv.Atoi(prop[2:])
 	if err != nil || n < 0 || n > maxFn {
-		return 0, false, false, false
+		return 0, false, false
 	}
-	return n, on, force, true
+	return n, prop[1] == '1', true
+}
+
+// parsePress is F«0|1»«fn» — button press (1) / release (0).
+func parsePress(prop string) (fn int, pressed bool, ok bool) {
+	if len(prop) == 0 || prop[0] != 'F' {
+		return 0, false, false
+	}
+	return parseFnDigits(prop)
+}
+
+// parseForce is f«0|1»«fn» — absolute off/on.
+func parseForce(prop string) (fn int, on bool, ok bool) {
+	if len(prop) == 0 || prop[0] != 'f' {
+		return 0, false, false
+	}
+	return parseFnDigits(prop)
+}
+
+// parseMode is m«0|1»«fn» — latching (0) / momentary (1).
+func parseMode(prop string) (fn int, momentary bool, ok bool) {
+	if len(prop) == 0 || prop[0] != 'm' {
+		return 0, false, false
+	}
+	return parseFnDigits(prop)
 }
 
 func parseSpeedValue(prop string) (speed uint8, ok bool) {

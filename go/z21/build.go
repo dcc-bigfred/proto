@@ -35,6 +35,38 @@ func BuildSetBroadcastFlags(flags uint32) []byte {
 	return buf
 }
 
+// BuildBroadcastFlagsReply is LAN_GET_BROADCASTFLAGS.
+func BuildBroadcastFlagsReply(flags uint32) []byte {
+	data := make([]byte, 4)
+	binary.LittleEndian.PutUint32(data, flags)
+	return BuildLAN(HeaderGetBroadcastFlags, data)
+}
+
+// BuildSetLocoFunctionGroup is LAN_X_SET_LOCO_FUNCTION_GROUP.
+// bits is a mask whose LSB is the lowest function of the group (see ParseSetLocoFunctionGroup).
+func BuildSetLocoFunctionGroup(addr uint16, db0 byte, bits uint32) []byte {
+	msb, lsb := AddrBytes(addr)
+	var raw byte
+	switch db0 {
+	case 0x20:
+		if bits&1 != 0 {
+			raw |= 0x10
+		}
+		for i := uint(0); i < 4; i++ {
+			if bits&(1<<(i+1)) != 0 {
+				raw |= 1 << i
+			}
+		}
+	case 0x21, 0x22:
+		raw = byte(bits & 0x0F)
+	case 0x23, 0x28:
+		raw = byte(bits)
+	case 0x29:
+		raw = byte(bits & 0x07)
+	}
+	return xbus([]byte{0xE4, db0, msb, lsb, raw})
+}
+
 // BuildHWInfoReply is LAN_GET_HWINFO.
 func BuildHWInfoReply(hwType, fwBCD uint32) []byte {
 	data := make([]byte, 8)

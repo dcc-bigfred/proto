@@ -1,0 +1,44 @@
+{
+  "cases": [
+    {
+      "id": "press_f1",
+      "line": "M0AS3<;>F11",
+      "op": "press",
+      "fields": {
+        "addr": 3,
+        "fn": 1,
+        "pressed": true
+      }
+    },
+    {
+      "id": "release_f1",
+      "line": "M0AS3<;>F01",
+      "op": "release",
+      "fields": {
+        "addr": 3,
+        "fn": 1,
+        "pressed": false
+      }
+    },
+    {
+      "id": "force_f0_on",
+      "line": "M0AS3<;>f10",
+      "op": "force",
+      "fields": {
+        "addr": 3,
+        "fn": 0,
+        "on": true
+      }
+    },
+    {
+      "id": "mode_f2_momentary",
+      "line": "M0AS3<;>m12",
+      "op": "mode",
+      "fields": {
+        "addr": 3,
+        "fn": 2,
+        "momentary": true
+      }
+    }
+  ]
+}

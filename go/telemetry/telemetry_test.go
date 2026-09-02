@@ -6,6 +6,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/dcc-bigfred/proto/go/commandstation"
+	"github.com/dcc-bigfred/proto/go/withrottle"
 )
 
 type lnSrc struct {
@@ -20,6 +21,10 @@ type z21Src struct {
 
 func (s z21Src) Z21MetricsSnapshot() commandstation.Z21MetricsSnapshot { return s.s }
 
+type wtSrc struct{ s withrottle.Snapshot }
+
+func (s wtSrc) Metrics() withrottle.Snapshot { return s.s }
+
 func TestRegisterNil(t *testing.T) {
 	reg, err := RegisterLocoNet(nil, Config{})
 	if err != nil || reg != nil {
@@ -28,6 +33,10 @@ func TestRegisterNil(t *testing.T) {
 	reg, err = RegisterZ21(nil, Config{})
 	if err != nil || reg != nil {
 		t.Fatalf("RegisterZ21(nil) = %v, %v", reg, err)
+	}
+	reg, err = RegisterWithrottle(nil, Config{})
+	if err != nil || reg != nil {
+		t.Fatalf("RegisterWithrottle(nil) = %v, %v", reg, err)
 	}
 }
 
@@ -56,4 +65,13 @@ func TestRegisterNoopMeter(t *testing.T) {
 		t.Fatal("expected registration")
 	}
 	t.Cleanup(func() { _ = z.Unregister() })
+
+	wt, err := RegisterWithrottle(wtSrc{s: withrottle.Snapshot{LinesTx: 4}}, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wt == nil {
+		t.Fatal("expected registration")
+	}
+	t.Cleanup(func() { _ = wt.Unregister() })
 }

@@ -25,3 +25,10 @@ type DriveHost interface {
 	SetTrackPower(client ClientID, on bool) error
 	Release(client ClientID, addr uint16)
 }
+
+// FunctionModer is an optional DriveHost extension. When the host does not
+// implement it, the WiThrottle server treats F2 as momentary and every other
+// function as latching (JMRI default).
+type FunctionModer interface {
+	Momentary(addr uint16, fn uint8) bool
+}

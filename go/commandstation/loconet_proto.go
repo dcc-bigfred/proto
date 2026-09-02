@@ -3,52 +3,19 @@ package commandstation
 import (
 	"encoding/hex"
 	"fmt"
+
+	"github.com/dcc-bigfred/proto/go/loconet"
 )
 
-// LocoNet checksum:
-// The XOR of all bytes including the checksum byte must equal 0xFF.
-func lnChecksumOK(pkt []byte) bool {
-	if len(pkt) < 2 {
-		return false
-	}
-	var x byte
-	for _, b := range pkt {
-		x ^= b
-	}
-	return x == 0xFF
-}
+func lnChecksumOK(pkt []byte) bool { return loconet.ChecksumOK(pkt) }
 
-func lnAppendChecksum(msg []byte) []byte {
-	var x byte
-	for _, b := range msg {
-		x ^= b
-	}
-	// want x ^ chk == 0xFF => chk == x ^ 0xFF
-	return append(msg, x^0xFF)
-}
+func lnAppendChecksum(msg []byte) []byte { return loconet.AppendChecksum(msg) }
 
-func lnMsgLen(opcode byte, buf []byte) (int, bool) {
-	// Length encoding is in bits 5..6:
-	// 00 => 2 bytes, 01 => 4 bytes, 10 => 6 bytes, 11 => variable length, second byte is total length.
-	switch (opcode >> 5) & 0x03 {
-	case 0:
-		return 2, true
-	case 1:
-		return 4, true
-	case 2:
-		return 6, true
-	default:
-		// variable
-		if len(buf) < 2 {
-			return 0, false
-		}
-		l := int(buf[1])
-		if l < 2 {
-			return 0, false
-		}
-		return l, true
-	}
-}
+func lnMsgLen(opcode byte, buf []byte) (int, bool) { return loconet.MsgLen(opcode, buf) }
+
+type lnStreamParser = loconet.StreamParser
+
+const lnMaxFrameLen = loconet.MaxFrame
 
 type lnPacket []byte
 
@@ -57,55 +24,6 @@ func (p lnPacket) String() string {
 		return "<empty>"
 	}
 	return hex.EncodeToString([]byte(p))
-}
-
-// lnStreamParser incrementally reconstructs packets from a byte stream.
-type lnStreamParser struct {
-	cur []byte
-}
-
-// lnMaxFrameLen is the largest legal LocoNet frame (variable-length count byte).
-const lnMaxFrameLen = 127
-
-func (p *lnStreamParser) PushByte(b byte) (pkt []byte, ok bool) {
-	// Message starts at byte with opcode bit7 = 1.
-	if len(p.cur) == 0 {
-		if (b & 0x80) == 0 {
-			return nil, false
-		}
-		p.cur = append(p.cur, b)
-		return nil, false
-	}
-
-	// Mid-frame resync: a new opcode byte abandons the partial frame.
-	if (b & 0x80) != 0 {
-		p.cur = []byte{b}
-		return nil, false
-	}
-
-	p.cur = append(p.cur, b)
-
-	want, known := lnMsgLen(p.cur[0], p.cur)
-	if !known || want == 0 || want > lnMaxFrameLen {
-		p.cur = p.cur[:0]
-		return nil, false
-	}
-	if len(p.cur) < want {
-		// Guard against garbage that never completes a declared-length frame.
-		if len(p.cur) > lnMaxFrameLen {
-			p.cur = p.cur[:0]
-		}
-		return nil, false
-	}
-
-	if len(p.cur) > want {
-		p.cur = p.cur[:0]
-		return nil, false
-	}
-
-	pkt = append([]byte{}, p.cur...)
-	p.cur = p.cur[:0]
-	return pkt, true
 }
 
 const (

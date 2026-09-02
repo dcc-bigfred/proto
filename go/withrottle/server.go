@@ -6,6 +6,8 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/dcc-bigfred/proto/go/drive"
 )
@@ -14,17 +16,19 @@ import (
 const DefaultPort uint16 = 12090
 
 const (
-	serverName     = "proto"
-	heartbeatSecs  = 10
-	maxLineBytes   = 8192
-	rosterEmpty    = "RL0"
-	protocolVer    = "VN2.0"
+	serverName    = "proto"
+	heartbeatSecs = 10
+	maxLineBytes  = 8192
+	rosterEmpty   = "RL0"
+	protocolVer   = "VN2.0"
+	writeTimeout  = 5 * time.Second
 )
 
 // Server is an inbound WiThrottle TCP listener.
 type Server struct {
 	host drive.DriveHost
 	ln   net.Listener
+	done chan struct{}
 
 	mu      sync.Mutex
 	conns   map[net.Conn]*session
@@ -32,7 +36,9 @@ type Server struct {
 }
 
 type session struct {
-	conn     net.Conn
+	conn net.Conn
+	wmu  sync.Mutex // serializes writes; never held together with Server.mu
+
 	id       drive.ClientID
 	device   string
 	name     string
@@ -40,6 +46,11 @@ type session struct {
 	locos    map[uint16]struct{}
 	forward  map[uint16]bool
 	speed    map[uint16]uint8
+	fnBits   map[uint16]uint32
+	momentary map[uint16]map[uint8]bool
+
+	lastRx atomic.Int64
+	hbOn   atomic.Bool
 }
 
 // Listen binds TCP and serves until Close. bind may be "127.0.0.1:0".
@@ -57,10 +68,12 @@ func Listen(bind string, host drive.DriveHost) (*Server, error) {
 	s := &Server{
 		host:    host,
 		ln:      ln,
+		done:    make(chan struct{}),
 		conns:   make(map[net.Conn]*session),
 		trackOn: true,
 	}
 	go s.acceptLoop()
+	go s.hbLoop()
 	return s, nil
 }
 
@@ -69,10 +82,19 @@ func (s *Server) Addr() net.Addr { return s.ln.Addr() }
 
 // Close stops the listener and connected sessions.
 func (s *Server) Close() error {
+	select {
+	case <-s.done:
+	default:
+		close(s.done)
+	}
 	err := s.ln.Close()
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	conns := make([]net.Conn, 0, len(s.conns))
 	for c := range s.conns {
+		conns = append(conns, c)
+	}
+	s.mu.Unlock()
+	for _, c := range conns {
 		_ = c.Close()
 	}
 	return err
@@ -81,8 +103,12 @@ func (s *Server) Close() error {
 // NotifyLocoState pushes M…A V/R/F lines to sessions that acquired addr.
 func (s *Server) NotifyLocoState(st drive.LocoState) {
 	view := locoView{Speed: st.Speed, Forward: st.Forward, Functions: st.Functions}
+	type job struct {
+		sess  *session
+		lines []string
+	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	jobs := make([]job, 0, len(s.conns))
 	for _, sess := range s.conns {
 		if _, ok := sess.locos[st.Addr]; !ok {
 			continue
@@ -91,24 +117,36 @@ func (s *Server) NotifyLocoState(st drive.LocoState) {
 		if tid == 0 {
 			tid = '0'
 		}
-		for _, line := range buildNotify(tid, st.Addr, view) {
-			writeLine(sess.conn, line)
-		}
+		jobs = append(jobs, job{sess: sess, lines: buildNotify(tid, st.Addr, view)})
+	}
+	s.mu.Unlock()
+	for _, j := range jobs {
+		j := j
+		go func() {
+			for _, line := range j.lines {
+				j.sess.write(line)
+			}
+		}()
 	}
 }
 
 // NotifyTrackPower broadcasts PPA0 / PPA1.
 func (s *Server) NotifyTrackPower(on bool) {
-	s.mu.Lock()
-	s.trackOn = on
 	line := "PPA0"
 	if on {
 		line = "PPA1"
 	}
+	s.mu.Lock()
+	s.trackOn = on
+	targets := make([]*session, 0, len(s.conns))
 	for _, sess := range s.conns {
-		writeLine(sess.conn, line)
+		targets = append(targets, sess)
 	}
 	s.mu.Unlock()
+	for _, sess := range targets {
+		sess := sess
+		go sess.write(line)
+	}
 }
 
 func (s *Server) acceptLoop() {
@@ -124,25 +162,80 @@ func (s *Server) acceptLoop() {
 func (s *Server) serve(conn net.Conn) {
 	defer conn.Close()
 	sess := &session{
-		conn:     conn,
-		id:       drive.ClientID(conn.RemoteAddr().String()),
-		throttle: '0',
-		locos:    map[uint16]struct{}{},
-		forward:  map[uint16]bool{},
-		speed:    map[uint16]uint8{},
+		conn:      conn,
+		id:        drive.ClientID(conn.RemoteAddr().String()),
+		throttle:  '0',
+		locos:     map[uint16]struct{}{},
+		forward:   map[uint16]bool{},
+		speed:     map[uint16]uint8{},
+		fnBits:    map[uint16]uint32{},
+		momentary: map[uint16]map[uint8]bool{},
 	}
+	sess.touch()
 	s.mu.Lock()
 	s.conns[conn] = sess
 	s.mu.Unlock()
 	defer s.drop(sess)
 
-	r := bufio.NewReaderSize(conn, maxLineBytes)
+	sc := bufio.NewScanner(conn)
+	sc.Buffer(make([]byte, 0, 512), maxLineBytes)
+	for sc.Scan() {
+		sess.touch()
+		s.handle(sess, strings.TrimRight(sc.Text(), "\r"))
+	}
+}
+
+func (s *Server) hbLoop() {
+	t := time.NewTicker(time.Second)
+	defer t.Stop()
 	for {
-		line, err := r.ReadString('\n')
-		if err != nil {
+		select {
+		case <-s.done:
 			return
+		case <-t.C:
+			s.enforceHeartbeat()
 		}
-		s.handle(sess, strings.TrimRight(line, "\r\n"))
+	}
+}
+
+func (s *Server) enforceHeartbeat() {
+	deadline := time.Now().Add(-2 * heartbeatSecs * time.Second)
+	s.mu.Lock()
+	var dead []*session
+	for _, sess := range s.conns {
+		if !sess.hbOn.Load() {
+			continue
+		}
+		if time.Unix(0, sess.lastRx.Load()).Before(deadline) {
+			dead = append(dead, sess)
+		}
+	}
+	s.mu.Unlock()
+	for _, sess := range dead {
+		s.deadman(sess)
+		_ = sess.conn.Close()
+	}
+}
+
+func (s *Server) deadman(sess *session) {
+	s.mu.Lock()
+	locos := make([]uint16, 0, len(sess.locos))
+	for addr := range sess.locos {
+		locos = append(locos, addr)
+	}
+	id := sess.id
+	forward := make(map[uint16]bool, len(sess.forward))
+	for k, v := range sess.forward {
+		forward[k] = v
+	}
+	s.mu.Unlock()
+	for _, addr := range locos {
+		fwd := true
+		if f, ok := forward[addr]; ok {
+			fwd = f
+		}
+		_ = s.host.SetSpeed(id, addr, 0, fwd, 128)
+		s.host.Release(id, addr)
 	}
 }
 
@@ -175,8 +268,12 @@ func (s *Server) handle(sess *session, line string) {
 		sess.name = strings.TrimSpace(line[1:])
 	case line == "Q":
 		_ = sess.conn.Close()
-	case line == "*" || line == "*+" || line == "*-":
+	case line == "*":
 		return
+	case line == "*+":
+		sess.hbOn.Store(true)
+	case line == "*-":
+		sess.hbOn.Store(false)
 	case strings.HasPrefix(line, "PPA"):
 		on := len(line) > 3 && line[3] != '0'
 		_ = s.host.SetTrackPower(sess.id, on)
@@ -201,7 +298,7 @@ func (s *Server) sendBurst(sess *session) {
 		rosterEmpty,
 		"HT" + serverName,
 	} {
-		writeLine(sess.conn, line)
+		sess.write(line)
 	}
 }
 
@@ -215,7 +312,7 @@ func (s *Server) handleM(sess *session, line string) {
 	case MOpAdd:
 		addr, ok := parseAcquireAddr(cmd.LocoKey, cmd.Properties)
 		if !ok {
-			writeLine(sess.conn, "HMInvalid acquire address")
+			sess.write("HMInvalid acquire address")
 			return
 		}
 		s.mu.Lock()
@@ -231,7 +328,7 @@ func (s *Server) handleM(sess *session, line string) {
 		for _, l := range buildAcquireReply(cmd.ThrottleID, addr, locoView{
 			Speed: st.Speed, Forward: st.Forward, Functions: st.Functions,
 		}) {
-			writeLine(sess.conn, l)
+			sess.write(l)
 		}
 	case MOpRemove:
 		var released []uint16
@@ -242,19 +339,19 @@ func (s *Server) handleM(sess *session, line string) {
 			}
 			sess.locos = map[uint16]struct{}{}
 			s.mu.Unlock()
-			writeLine(sess.conn, "M"+string(cmd.ThrottleID)+"-*"+propSep+"r")
+			sess.write("M" + string(cmd.ThrottleID) + "-*" + propSep + "r")
 		} else if addr, _, ok := ParseLocoKey(cmd.LocoKey); ok {
 			s.mu.Lock()
 			delete(sess.locos, addr)
 			s.mu.Unlock()
 			released = []uint16{addr}
-			writeLine(sess.conn, buildReleaseLine(cmd.ThrottleID, cmd.LocoKey))
+			sess.write(buildReleaseLine(cmd.ThrottleID, cmd.LocoKey))
 		}
 		for _, addr := range released {
 			s.host.Release(sess.id, addr)
 		}
 	case MOpSteal:
-		writeLine(sess.conn, "HMSteal not supported")
+		sess.write("HMSteal not supported")
 	case MOpAction:
 		s.handleAction(sess, cmd)
 	}
@@ -299,13 +396,34 @@ func (s *Server) handleAction(sess *session, cmd MCommand) {
 			}
 			_ = s.host.SetSpeed(sess.id, addr, speed, forward, 128)
 		}
-	case len(prop) >= 2 && (prop[0] == 'F' || prop[0] == 'f'):
-		fn, on, _, ok := parseFunctionAction(prop)
+	case len(prop) >= 2 && prop[0] == 'f':
+		fn, on, ok := parseForce(prop)
 		if !ok {
 			return
 		}
 		for _, addr := range addrs {
-			_ = s.host.SetFunction(sess.id, addr, uint8(fn), on)
+			s.setFn(sess, addr, uint8(fn), on)
+		}
+	case len(prop) >= 2 && prop[0] == 'F':
+		fn, pressed, ok := parsePress(prop)
+		if !ok {
+			return
+		}
+		for _, addr := range addrs {
+			switch {
+			case s.isMomentary(sess, addr, uint8(fn)):
+				s.setFn(sess, addr, uint8(fn), pressed)
+			case pressed:
+				s.setFn(sess, addr, uint8(fn), !s.fnState(sess, addr, uint8(fn)))
+			}
+		}
+	case len(prop) >= 2 && prop[0] == 'm':
+		fn, mom, ok := parseMode(prop)
+		if !ok {
+			return
+		}
+		for _, addr := range addrs {
+			s.setMomentary(sess, addr, uint8(fn), mom)
 		}
 	case prop == "X":
 		for _, addr := range addrs {
@@ -332,6 +450,64 @@ func (s *Server) handleAction(sess *session, cmd MCommand) {
 	}
 }
 
+func (s *Server) setFn(sess *session, addr uint16, fn uint8, on bool) {
+	if s.fnState(sess, addr, fn) == on {
+		return
+	}
+	_ = s.host.SetFunction(sess.id, addr, fn, on)
+	s.mu.Lock()
+	bits := sess.fnBits[addr]
+	if on {
+		bits |= 1 << fn
+	} else {
+		bits &^= 1 << fn
+	}
+	sess.fnBits[addr] = bits
+	tid := sess.throttle
+	s.mu.Unlock()
+	if tid == 0 {
+		tid = '0'
+	}
+	bit := 0
+	if on {
+		bit = 1
+	}
+	sess.write("M" + string(tid) + "A" + LocoKey(addr) + propSep + "F" + fmt.Sprintf("%d%d", bit, fn))
+}
+
+func (s *Server) fnState(sess *session, addr uint16, fn uint8) bool {
+	if st, err := s.host.LocoState(addr); err == nil {
+		return st.Functions&(1<<fn) != 0
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return sess.fnBits[addr]&(1<<fn) != 0
+}
+
+func (s *Server) isMomentary(sess *session, addr uint16, fn uint8) bool {
+	s.mu.Lock()
+	if m, ok := sess.momentary[addr]; ok {
+		if v, ok := m[fn]; ok {
+			s.mu.Unlock()
+			return v
+		}
+	}
+	s.mu.Unlock()
+	if fm, ok := s.host.(drive.FunctionModer); ok {
+		return fm.Momentary(addr, fn)
+	}
+	return fn == 2
+}
+
+func (s *Server) setMomentary(sess *session, addr uint16, fn uint8, mom bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if sess.momentary[addr] == nil {
+		sess.momentary[addr] = map[uint8]bool{}
+	}
+	sess.momentary[addr][fn] = mom
+}
+
 func (s *Server) addrs(sess *session, key string) []uint16 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -352,8 +528,17 @@ func (s *Server) addrs(sess *session, key string) []uint16 {
 	return []uint16{addr}
 }
 
-func writeLine(conn net.Conn, line string) {
-	_, _ = conn.Write([]byte(line + "\n"))
+func (sess *session) touch() {
+	sess.lastRx.Store(time.Now().UnixNano())
+}
+
+func (sess *session) write(line string) {
+	sess.wmu.Lock()
+	defer sess.wmu.Unlock()
+	_ = sess.conn.SetWriteDeadline(time.Now().Add(writeTimeout))
+	if _, err := sess.conn.Write([]byte(line + "\n")); err != nil {
+		_ = sess.conn.Close()
+	}
 }
 
 type nopHost struct{}

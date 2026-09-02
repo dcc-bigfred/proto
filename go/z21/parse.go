@@ -1,5 +1,7 @@
 package z21
 
+import "encoding/binary"
+
 // ParseGetLocoInfo is LAN_X_GET_LOCO_INFO.
 func ParseGetLocoInfo(pkt []byte) (addr uint16, ok bool) {
 	if len(pkt) < 9 {
@@ -60,6 +62,65 @@ func ParseSetLocoFunction(pkt []byte) (addr uint16, fn int, on bool, toggle bool
 	}
 }
 
+// ParseSetLocoFunctionGroup is LAN_X_SET_LOCO_FUNCTION_GROUP (0xE4, DB0 0x20…0x29).
+// bits is a mask whose LSB is function lo (the lowest function in the group).
+func ParseSetLocoFunctionGroup(pkt []byte) (addr uint16, lo, hi uint8, bits uint32, ok bool) {
+	if len(pkt) < 10 {
+		return 0, 0, 0, 0, false
+	}
+	_, header, okHdr := PacketHeader(pkt)
+	if !okHdr || header != HeaderXBus || pkt[4] != 0xE4 {
+		return 0, 0, 0, 0, false
+	}
+	addr, ok = ParseAddr(pkt, 6)
+	if !ok {
+		return 0, 0, 0, 0, false
+	}
+	raw := pkt[8]
+	switch pkt[5] {
+	case 0x20: // F0–F4: F0 is wire bit 4, F1–F4 bits 0–3
+		lo, hi = 0, 4
+		if raw&0x10 != 0 {
+			bits |= 1 << 0
+		}
+		for i := uint(0); i < 4; i++ {
+			if raw&(1<<i) != 0 {
+				bits |= 1 << (i + 1)
+			}
+		}
+	case 0x21: // F5–F8
+		lo, hi = 5, 8
+		bits = uint32(raw & 0x0F)
+	case 0x22: // F9–F12
+		lo, hi = 9, 12
+		bits = uint32(raw & 0x0F)
+	case 0x23: // F13–F20
+		lo, hi = 13, 20
+		bits = uint32(raw)
+	case 0x28: // F21–F28
+		lo, hi = 21, 28
+		bits = uint32(raw)
+	case 0x29: // F29–F31
+		lo, hi = 29, 31
+		bits = uint32(raw & 0x07)
+	default:
+		return 0, 0, 0, 0, false
+	}
+	return addr, lo, hi, bits, true
+}
+
+// ParseSetBroadcastFlags is LAN_SET_BROADCASTFLAGS (0x50).
+func ParseSetBroadcastFlags(pkt []byte) (flags uint32, ok bool) {
+	if !ValidFrame(pkt) || len(pkt) < 8 {
+		return 0, false
+	}
+	_, header, okHdr := PacketHeader(pkt)
+	if !okHdr || header != HeaderSetBroadcastFlags {
+		return 0, false
+	}
+	return binary.LittleEndian.Uint32(pkt[4:8]), true
+}
+
 // ParseTrackPower is LAN_X_SET_TRACK_POWER_ON (0x21 0x81) / OFF (0x21 0x80).
 func ParseTrackPower(pkt []byte) (on bool, ok bool) {
 	if len(pkt) < 7 {
@@ -89,8 +150,6 @@ func handshakeReply(pkt []byte, serial uint32) ([]byte, bool) {
 		return BuildSerialReply(serial), true
 	case HeaderGetHWInfo:
 		return BuildHWInfoReply(hwTypeZ21Black, firmwareBCD), true
-	case HeaderGetBroadcastFlags:
-		return BuildLAN(HeaderGetBroadcastFlags, make([]byte, 4)), true
 	case HeaderGetCode:
 		return BuildLAN(HeaderGetCode, []byte{0x00}), true
 	case HeaderSystemStateGetData:

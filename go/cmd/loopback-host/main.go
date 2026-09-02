@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"os"
 	"sync"
@@ -11,10 +12,14 @@ import (
 	"github.com/dcc-bigfred/proto/go/z21"
 )
 
-// loopback-host listens on Z21 UDP and WiThrottle TCP, prints bind
-// addresses, and exits 0 after SetSpeed(addr=3, speed=50).
 func main() {
-	h := &host{done: make(chan struct{})}
+	expect := flag.Int("expect", 1, "exit after N drive events")
+	flag.Parse()
+
+	h := &host{
+		expect: *expect,
+		done:   make(chan struct{}),
+	}
 	z, err := z21.Listen("127.0.0.1:0", h)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -38,17 +43,33 @@ func main() {
 }
 
 type host struct {
-	once sync.Once
-	done chan struct{}
+	mu     sync.Mutex
+	n      int
+	expect int
+	done   chan struct{}
+	once   sync.Once
 }
 
-func (h *host) SetSpeed(_ drive.ClientID, addr uint16, speed uint8, forward bool, _ uint8) error {
-	if addr == 3 && speed == 50 && forward {
+func (h *host) emit(line string) {
+	fmt.Println(line)
+	_ = os.Stdout.Sync()
+	h.mu.Lock()
+	h.n++
+	n := h.n
+	h.mu.Unlock()
+	if n >= h.expect {
 		h.once.Do(func() { close(h.done) })
 	}
+}
+
+func (h *host) SetSpeed(_ drive.ClientID, addr uint16, speed uint8, forward bool, steps uint8) error {
+	h.emit(fmt.Sprintf("SetSpeed %d %d %v %d", addr, speed, forward, steps))
 	return nil
 }
-func (h *host) SetFunction(drive.ClientID, uint16, uint8, bool) error { return nil }
+func (h *host) SetFunction(_ drive.ClientID, addr uint16, fn uint8, on bool) error {
+	h.emit(fmt.Sprintf("SetFunction %d %d %v", addr, fn, on))
+	return nil
+}
 func (h *host) LocoState(addr uint16) (drive.LocoState, error) {
 	return drive.LocoState{Addr: addr, Steps: 128, Forward: true}, nil
 }

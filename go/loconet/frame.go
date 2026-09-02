@@ -42,7 +42,8 @@ func MsgLen(opcode byte, buf []byte) (int, bool) {
 	}
 }
 
-const maxFrame = 127
+// MaxFrame is the largest legal LocoNet frame (variable-length count byte).
+const MaxFrame = 127
 
 // StreamParser incrementally reconstructs packets from a byte stream.
 type StreamParser struct {
@@ -64,12 +65,12 @@ func (p *StreamParser) PushByte(b byte) (pkt []byte, ok bool) {
 	}
 	p.cur = append(p.cur, b)
 	want, known := MsgLen(p.cur[0], p.cur)
-	if !known || want == 0 || want > maxFrame {
+	if !known || want == 0 || want > MaxFrame {
 		p.cur = p.cur[:0]
 		return nil, false
 	}
 	if len(p.cur) < want {
-		if len(p.cur) > maxFrame {
+		if len(p.cur) > MaxFrame {
 			p.cur = p.cur[:0]
 		}
 		return nil, false
@@ -81,4 +82,9 @@ func (p *StreamParser) PushByte(b byte) (pkt []byte, ok bool) {
 	pkt = append([]byte{}, p.cur...)
 	p.cur = p.cur[:0]
 	return pkt, true
+}
+
+// Buffered is the partial frame held by the parser (empty when idle).
+func (p *StreamParser) Buffered() []byte {
+	return append([]byte(nil), p.cur...)
 }

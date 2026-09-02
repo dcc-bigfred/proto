@@ -70,8 +70,8 @@ func TestLnStreamParserMidFrameResync(t *testing.T) {
 	if _, ok := p.PushByte(0xBF); ok {
 		t.Fatal("expected incomplete after resync")
 	}
-	if len(p.cur) != 1 || p.cur[0] != 0xBF {
-		t.Fatalf("expected resync on opcode byte, cur=% X", p.cur)
+	if buf := p.Buffered(); len(buf) != 1 || buf[0] != 0xBF {
+		t.Fatalf("expected resync on opcode byte, cur=% X", buf)
 	}
 }
 
@@ -95,8 +95,8 @@ func TestLnStreamParserRejectsOversizeLength(t *testing.T) {
 	if _, ok := p.PushByte(0x00); ok {
 		t.Fatal("expected reject for zero length")
 	}
-	if len(p.cur) != 0 {
-		t.Fatalf("parser should reset on bad length, cur=% X", p.cur)
+	if buf := p.Buffered(); len(buf) != 0 {
+		t.Fatalf("parser should reset on bad length, cur=% X", buf)
 	}
 }
 

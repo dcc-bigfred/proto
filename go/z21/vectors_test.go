@@ -69,3 +69,31 @@ func TestGoldenFrames(t *testing.T) {
 		}
 	}
 }
+
+func TestGoldenFunctionGroup(t *testing.T) {
+	f, err := vectors.Load(testdata(t, "z21/function_group.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(f.Cases) == 0 {
+		t.Fatal("no cases")
+	}
+	for _, c := range f.Cases {
+		want, err := hex.DecodeString(c.Hex)
+		if err != nil {
+			t.Fatalf("%s: %v", c.ID, err)
+		}
+		addr, lo, hi, bits, ok := ParseSetLocoFunctionGroup(want)
+		if !ok {
+			t.Fatalf("%s: parse", c.ID)
+		}
+		_ = addr
+		_ = lo
+		_ = hi
+		_ = bits
+		got := BuildSetLocoFunctionGroup(addr, want[5], bits)
+		if hex.EncodeToString(got) != c.Hex {
+			t.Fatalf("%s round-trip:\n got % X\nwant % X", c.ID, got, want)
+		}
+	}
+}

@@ -71,12 +71,17 @@ func (g *Gateway) Listen(bind string, mode Mode) (net.Addr, error) {
 	return ln.Addr(), nil
 }
 
-// Close stops listeners, downstreams, and the upstream.
+// Close stops listeners, downstreams, and the upstream. Idempotent.
 func (g *Gateway) Close() error {
 	g.mu.Lock()
+	if g.closed {
+		g.mu.Unlock()
+		return nil
+	}
 	g.closed = true
 	lns := append([]net.Listener(nil), g.listeners...)
 	conns := append([]*gwConn(nil), g.conns...)
+	up := g.up
 	g.mu.Unlock()
 	for _, ln := range lns {
 		_ = ln.Close()
@@ -84,8 +89,8 @@ func (g *Gateway) Close() error {
 	for _, c := range conns {
 		_ = c.c.Close()
 	}
-	if g.up != nil {
-		return g.up.Close()
+	if up != nil {
+		return up.Close()
 	}
 	return nil
 }
@@ -251,6 +256,7 @@ type Recorder struct {
 	mu      sync.Mutex
 	Written [][]byte
 	ch      chan []byte
+	once    sync.Once
 }
 
 // NewRecorder returns a recorder with a buffered Recv channel.
@@ -266,6 +272,17 @@ func (r *Recorder) WritePacket(pkt []byte) error {
 	return nil
 }
 
+// WrittenPackets returns a copy of frames written to the upstream.
+func (r *Recorder) WrittenPackets() [][]byte {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([][]byte, len(r.Written))
+	for i, p := range r.Written {
+		out[i] = append([]byte(nil), p...)
+	}
+	return out
+}
+
 // Recv is the upstream RX channel.
 func (r *Recorder) Recv() <-chan []byte { return r.ch }
 
@@ -274,8 +291,8 @@ func (r *Recorder) Inject(pkt []byte) {
 	r.ch <- append([]byte(nil), pkt...)
 }
 
-// Close is a no-op besides closing Recv.
+// Close is idempotent and closes Recv.
 func (r *Recorder) Close() error {
-	close(r.ch)
+	r.once.Do(func() { close(r.ch) })
 	return nil
 }

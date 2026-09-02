@@ -49,6 +49,27 @@ jobs:
       - name: Test
         run: cargo test --workspace --exclude dcc-proto-interop
 
+  rust-nostd:
+    name: Rust no_std
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: thumbv7em-none-eabihf, riscv32imac-unknown-none-elf
+
+      - name: Thumb
+        run: cargo build -p dcc-proto-z21 -p dcc-proto-withrottle --target thumbv7em-none-eabihf
+
+      - name: RISC-V
+        run: cargo build -p dcc-proto-z21 -p dcc-proto-withrottle --target riscv32imac-unknown-none-elf
+
   interop:
     name: Interop
     runs-on: ubuntu-latest
@@ -65,8 +86,14 @@ jobs:
       - name: Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Build loopback host
+        working-directory: go
+        run: mkdir -p ../rust/target && go build -o ../rust/target/loopback-host ./cmd/loopback-host
+
       - name: Rust client against Go Listen
         working-directory: rust
+        env:
+          PROTO_LOOPBACK_HOST: ${{ github.workspace }}/rust/target/loopback-host
         run: cargo test -p dcc-proto-interop -- --test-threads=1
 
   vectors-fresh:
