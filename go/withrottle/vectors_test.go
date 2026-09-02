@@ -45,6 +45,13 @@ func TestGoldenLines(t *testing.T) {
 			if line != "PPA1" {
 				t.Fatalf("ppa = %q", line)
 			}
+		case "estop":
+			if line != "M0AS3<;>X" {
+				t.Fatalf("estop = %q", line)
+			}
+			if cmd, ok := ParseM(line); !ok || len(cmd.Properties) == 0 || cmd.Properties[0] != "X" {
+				t.Fatalf("estop ParseM = %+v ok=%v", cmd, ok)
+			}
 		}
 	}
 }

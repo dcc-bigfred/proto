@@ -13,6 +13,11 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+var (
+	_ Station          = (*LocoNet)(nil)
+	_ EmergencyStopper = (*LocoNet)(nil)
+)
+
 type lnTransport interface {
 	WritePacket(pkt []byte) error
 	Close() error

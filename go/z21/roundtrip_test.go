@@ -123,6 +123,20 @@ func TestNewZ21RocoLoopback(t *testing.T) {
 		t.Fatalf("SetTrackPower = %v", host.power)
 	}
 
+	if err := cli.EmergencyStop(3, true); err != nil {
+		t.Fatal(err)
+	}
+	deadline = time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if len(host.speeds) > 0 && host.speeds[len(host.speeds)-1].Speed == 1 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if len(host.speeds) == 0 || host.speeds[len(host.speeds)-1].Speed != 1 {
+		t.Fatalf("EmergencyStop host=%+v", host.speeds)
+	}
+
 	obs := cli.ObserveStates()
 	time.Sleep(50 * time.Millisecond)
 drain:

@@ -389,6 +389,22 @@ func (c *Client) GetSpeed(addr uint16) (uint8, bool, error) {
 	return speed, forward, nil
 }
 
+// EmergencyStop sends M0A«key»<;>X (WiThrottle per-loco e-stop).
+func (c *Client) EmergencyStop(addr uint16, forward bool) error {
+	if err := c.ensure(addr); err != nil {
+		return err
+	}
+	key := LocoKey(addr)
+	if err := c.write(fmt.Sprintf("M0A%s%sX", key, propSep)); err != nil {
+		return err
+	}
+	c.mu.Lock()
+	c.speed[addr] = 1
+	c.forward[addr] = forward
+	c.mu.Unlock()
+	return nil
+}
+
 func (c *Client) SendFn(addr uint16, num uint8, toggle bool) error {
 	if err := c.ensure(addr); err != nil {
 		return err

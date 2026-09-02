@@ -28,6 +28,7 @@ pub enum Command {
     SetSpeed { addr: u16, speed: u8 },
     SetDirection { addr: u16, forward: bool },
     SetFunction { addr: u16, func: u8, on: bool },
+    EmergencyStop { addr: u16 },
     TrackPower { on: bool },
 }
 
@@ -109,8 +110,13 @@ impl Client {
                 encode_action(out, addr, b'R', v)
             }
             Command::SetFunction { addr, func, on } => encode_function(out, addr, func, on),
+            Command::EmergencyStop { addr } => encode_estop(out, addr),
             Command::TrackPower { on } => {
-                let line = if on { b"PPA1\n".as_slice() } else { b"PPA0\n".as_slice() };
+                let line = if on {
+                    b"PPA1\n".as_slice()
+                } else {
+                    b"PPA0\n".as_slice()
+                };
                 out.extend_from_slice(line).map_err(|_| Error::BufferFull)
             }
         }
@@ -148,36 +154,61 @@ fn push_u16<const N: usize>(s: &mut String<N>, mut n: u16) {
 fn encode_acquire(out: &mut WireBuf, addr: u16) -> Result<(), Error> {
     let mut key = String::<8>::new();
     loco_key(addr, &mut key);
-    out.extend_from_slice(b"M0+").map_err(|_| Error::BufferFull)?;
-    out.extend_from_slice(key.as_bytes()).map_err(|_| Error::BufferFull)?;
-    out.extend_from_slice(b"<;>").map_err(|_| Error::BufferFull)?;
-    out.extend_from_slice(key.as_bytes()).map_err(|_| Error::BufferFull)?;
+    out.extend_from_slice(b"M0+")
+        .map_err(|_| Error::BufferFull)?;
+    out.extend_from_slice(key.as_bytes())
+        .map_err(|_| Error::BufferFull)?;
+    out.extend_from_slice(b"<;>")
+        .map_err(|_| Error::BufferFull)?;
+    out.extend_from_slice(key.as_bytes())
+        .map_err(|_| Error::BufferFull)?;
     out.push(b'\n').map_err(|_| Error::BufferFull)
 }
 
 fn encode_action(out: &mut WireBuf, addr: u16, letter: u8, value: u8) -> Result<(), Error> {
     let mut key = String::<8>::new();
     loco_key(addr, &mut key);
-    out.extend_from_slice(b"M0A").map_err(|_| Error::BufferFull)?;
-    out.extend_from_slice(key.as_bytes()).map_err(|_| Error::BufferFull)?;
-    out.extend_from_slice(b"<;>").map_err(|_| Error::BufferFull)?;
+    out.extend_from_slice(b"M0A")
+        .map_err(|_| Error::BufferFull)?;
+    out.extend_from_slice(key.as_bytes())
+        .map_err(|_| Error::BufferFull)?;
+    out.extend_from_slice(b"<;>")
+        .map_err(|_| Error::BufferFull)?;
     out.push(letter).map_err(|_| Error::BufferFull)?;
     let mut num = String::<8>::new();
     push_u16(&mut num, u16::from(value));
-    out.extend_from_slice(num.as_bytes()).map_err(|_| Error::BufferFull)?;
+    out.extend_from_slice(num.as_bytes())
+        .map_err(|_| Error::BufferFull)?;
+    out.push(b'\n').map_err(|_| Error::BufferFull)
+}
+
+fn encode_estop(out: &mut WireBuf, addr: u16) -> Result<(), Error> {
+    let mut key = String::<8>::new();
+    loco_key(addr, &mut key);
+    out.extend_from_slice(b"M0A")
+        .map_err(|_| Error::BufferFull)?;
+    out.extend_from_slice(key.as_bytes())
+        .map_err(|_| Error::BufferFull)?;
+    out.extend_from_slice(b"<;>X")
+        .map_err(|_| Error::BufferFull)?;
     out.push(b'\n').map_err(|_| Error::BufferFull)
 }
 
 fn encode_function(out: &mut WireBuf, addr: u16, func: u8, on: bool) -> Result<(), Error> {
     let mut key = String::<8>::new();
     loco_key(addr, &mut key);
-    out.extend_from_slice(b"M0A").map_err(|_| Error::BufferFull)?;
-    out.extend_from_slice(key.as_bytes()).map_err(|_| Error::BufferFull)?;
-    out.extend_from_slice(b"<;>f").map_err(|_| Error::BufferFull)?;
-    out.push(if on { b'1' } else { b'0' }).map_err(|_| Error::BufferFull)?;
+    out.extend_from_slice(b"M0A")
+        .map_err(|_| Error::BufferFull)?;
+    out.extend_from_slice(key.as_bytes())
+        .map_err(|_| Error::BufferFull)?;
+    out.extend_from_slice(b"<;>f")
+        .map_err(|_| Error::BufferFull)?;
+    out.push(if on { b'1' } else { b'0' })
+        .map_err(|_| Error::BufferFull)?;
     let mut num = String::<8>::new();
     push_u16(&mut num, u16::from(func));
-    out.extend_from_slice(num.as_bytes()).map_err(|_| Error::BufferFull)?;
+    out.extend_from_slice(num.as_bytes())
+        .map_err(|_| Error::BufferFull)?;
     out.push(b'\n').map_err(|_| Error::BufferFull)
 }
 
@@ -270,10 +301,14 @@ fn parse_loco_key(s: &str) -> Option<u16> {
 pub fn encode_line_acquire(addr: u16, out: &mut WireBuf) -> Result<(), Error> {
     let mut key = String::<8>::new();
     loco_key(addr, &mut key);
-    out.extend_from_slice(b"M0+").map_err(|_| Error::BufferFull)?;
-    out.extend_from_slice(key.as_bytes()).map_err(|_| Error::BufferFull)?;
-    out.extend_from_slice(b"<;>").map_err(|_| Error::BufferFull)?;
-    out.extend_from_slice(key.as_bytes()).map_err(|_| Error::BufferFull)
+    out.extend_from_slice(b"M0+")
+        .map_err(|_| Error::BufferFull)?;
+    out.extend_from_slice(key.as_bytes())
+        .map_err(|_| Error::BufferFull)?;
+    out.extend_from_slice(b"<;>")
+        .map_err(|_| Error::BufferFull)?;
+    out.extend_from_slice(key.as_bytes())
+        .map_err(|_| Error::BufferFull)
 }
 
 pub fn encode_line_speed(addr: u16, speed: u8, out: &mut WireBuf) -> Result<(), Error> {
@@ -287,6 +322,15 @@ pub fn encode_line_dir(addr: u16, forward: bool, out: &mut WireBuf) -> Result<()
 pub fn encode_line_fn(addr: u16, func: u8, on: bool, out: &mut WireBuf) -> Result<(), Error> {
     let mut tmp = WireBuf::new();
     encode_function(&mut tmp, addr, func, on)?;
+    if tmp.last() == Some(&b'\n') {
+        tmp.pop();
+    }
+    out.extend_from_slice(&tmp).map_err(|_| Error::BufferFull)
+}
+
+pub fn encode_line_estop(addr: u16, out: &mut WireBuf) -> Result<(), Error> {
+    let mut tmp = WireBuf::new();
+    encode_estop(&mut tmp, addr)?;
     if tmp.last() == Some(&b'\n') {
         tmp.pop();
     }
@@ -336,7 +380,8 @@ mod tests {
         let bytes = s.as_bytes();
         let mut i = 0;
         while i + 1 < bytes.len() {
-            let b = u8::from_str_radix(core::str::from_utf8(&bytes[i..i + 2]).unwrap(), 16).unwrap();
+            let b =
+                u8::from_str_radix(core::str::from_utf8(&bytes[i..i + 2]).unwrap(), 16).unwrap();
             out.push(b).unwrap();
             i += 2;
         }
@@ -391,6 +436,7 @@ mod tests {
                 "set_speed_50" => encode_line_speed(3, 50, &mut out).unwrap(),
                 "set_dir_fwd" => encode_line_dir(3, true, &mut out).unwrap(),
                 "set_fn_f0_on" => encode_line_fn(3, 0, true, &mut out).unwrap(),
+                "estop_s3" => encode_line_estop(3, &mut out).unwrap(),
                 "track_power_on" => out.extend_from_slice(b"PPA1").unwrap(),
                 _ => continue,
             }

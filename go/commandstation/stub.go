@@ -1,5 +1,10 @@
 package commandstation
 
+var (
+	_ Station          = (*StubStation)(nil)
+	_ EmergencyStopper = (*StubStation)(nil)
+)
+
 // StubStation is a configurable no-op Station for tests in dependent
 // packages. Zero value methods return nil without recording calls.
 type StubStation struct {
@@ -25,4 +30,10 @@ func (s *StubStation) SetSpeed(addr LocoAddr, speed uint8, forward bool, speedSt
 	return nil
 }
 func (s *StubStation) GetSpeed(LocoAddr) (uint8, bool, error) { return 0, true, nil }
-func (s *StubStation) CleanUp() error                          { return nil }
+
+// EmergencyStop has no wire spec on the stub; it is a normal stop (speed 0).
+func (s *StubStation) EmergencyStop(addr LocoAddr, forward bool) error {
+	return s.SetSpeed(addr, 0, forward, 128)
+}
+
+func (s *StubStation) CleanUp() error { return nil }

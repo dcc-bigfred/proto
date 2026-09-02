@@ -2,9 +2,8 @@ package commandstation
 
 import "errors"
 
-// EmergencyStopper is an OPTIONAL capability for drivers that can bypass the
-// normal TX queue for an emergency stop so it is not delayed behind a full
-// throttle queue.
+// EmergencyStopper is the EmergencyStop selector of Station. Kept so callers
+// can type-assert a narrower capability; every Station implements it.
 type EmergencyStopper interface {
 	EmergencyStop(addr LocoAddr, forward bool) error
 }

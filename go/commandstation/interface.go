@@ -160,6 +160,11 @@ type Station interface {
 	SetSpeed(addr LocoAddr, speed uint8, forward bool, speedSteps uint8) error
 	// GetSpeed retrieves the current speed and direction of a locomotive
 	GetSpeed(addr LocoAddr) (speed uint8, forward bool, err error)
+	// EmergencyStop is a per-locomotive emergency stop. Protocols that
+	// specify one (LocoNet slot speed 0x01, Z21 LAN_X_SET_LOCO_DRIVE V=1,
+	// WiThrottle M…A X) use it. Otherwise the driver sends a normal stop
+	// (SetSpeed 0). forward is the direction bit that must stay on the wire.
+	EmergencyStop(addr LocoAddr, forward bool) error
 	CleanUp() error
 }
 

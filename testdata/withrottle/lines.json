@@ -48,6 +48,14 @@
       "fields": {
         "on": true
       }
+    },
+    {
+      "id": "estop_s3",
+      "line": "M0AS3<;>X",
+      "op": "estop",
+      "fields": {
+        "addr": 3
+      }
     }
   ]
 }

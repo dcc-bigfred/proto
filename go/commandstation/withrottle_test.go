@@ -81,6 +81,27 @@ func TestNewWiThrottleLoopback(t *testing.T) {
 	if err := st.SendFn(MainTrackMode, 3, 0, false); err != nil {
 		t.Fatal(err)
 	}
+
+	if err := st.EmergencyStop(3, true); err != nil {
+		t.Fatal(err)
+	}
+	deadline = time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		host.mu.Lock()
+		ok := len(host.speeds) > 0 && host.speeds[len(host.speeds)-1].Speed == 1
+		host.mu.Unlock()
+		if ok {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	host.mu.Lock()
+	last := host.speeds[len(host.speeds)-1]
+	host.mu.Unlock()
+	if last.Addr != 3 || last.Speed != 1 || !last.Forward {
+		t.Fatalf("EmergencyStop speed = %+v", last)
+	}
+
 	if _, err := st.ReadCV(MainTrackMode, LocoCV{}); err != ErrUnsupported {
 		t.Fatalf("ReadCV = %v", err)
 	}

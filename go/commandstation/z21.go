@@ -14,6 +14,11 @@ import (
 	"github.com/dcc-bigfred/proto/go/z21"
 )
 
+var (
+	_ Station          = (*Z21Roco)(nil)
+	_ EmergencyStopper = (*Z21Roco)(nil)
+)
+
 // z21 broadcast flags (LAN_SET_BROADCASTFLAGS, §2.16).
 const (
 	// z21BcDrivingSwitching delivers LAN_X_LOCO_INFO for *subscribed*
@@ -916,6 +921,12 @@ func (z *Z21Roco) GetSpeed(addr LocoAddr) (uint8, bool, error) {
 
 	_, _, speed, forward, _ := parseLocoInfoPacket(pkt)
 	return speed, forward, nil
+}
+
+// EmergencyStop sends LAN_X_SET_LOCO_DRIVE with V=1 (per-loco e-stop).
+// Direction (R) is preserved. This is not LAN_X_SET_STOP (layout-wide halt).
+func (z *Z21Roco) EmergencyStop(addr LocoAddr, forward bool) error {
+	return z.SetSpeed(addr, 1, forward, 128)
 }
 
 // encodeLocoDriveDB3 builds DB3 (RVVVVVVV) for LAN_X_SET_LOCO_DRIVE (§4.2).

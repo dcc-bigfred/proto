@@ -8,6 +8,7 @@ import (
 
 var (
 	_ Station                  = (*WiThrottle)(nil)
+	_ EmergencyStopper         = (*WiThrottle)(nil)
 	_ TrackPowerController     = (*WiThrottle)(nil)
 	_ withrottle.MetricsSource = (*WiThrottle)(nil)
 )
@@ -49,6 +50,10 @@ func (w *WiThrottle) SetSpeed(addr LocoAddr, speed uint8, forward bool, speedSte
 func (w *WiThrottle) GetSpeed(addr LocoAddr) (uint8, bool, error) {
 	speed, forward, err := w.c.GetSpeed(uint16(addr))
 	return speed, forward, w.mapErr(err)
+}
+
+func (w *WiThrottle) EmergencyStop(addr LocoAddr, forward bool) error {
+	return w.mapErr(w.c.EmergencyStop(uint16(addr), forward))
 }
 
 func (w *WiThrottle) SendFn(_ Mode, addr LocoAddr, num FuncNum, toggle bool) error {

@@ -144,6 +144,7 @@ func withrottleCases() vectors.File {
 		{ID: "set_dir_fwd", Line: "M0AS3<;>R1", Op: "set_direction", Fields: fields(map[string]any{"addr": 3, "forward": true})},
 		{ID: "set_fn_f0_on", Line: "M0AS3<;>f10", Op: "set_function", Fields: fields(map[string]any{"addr": 3, "fn": 0, "on": true})},
 		{ID: "track_power_on", Line: "PPA1", Op: "track_power", Fields: fields(map[string]any{"on": true})},
+		{ID: "estop_s3", Line: "M0AS3<;>X", Op: "estop", Fields: fields(map[string]any{"addr": 3})},
 	}
 	for _, c := range cases {
 		if c.Op == "hu" || c.Op == "track_power" {
