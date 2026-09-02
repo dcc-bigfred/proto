@@ -4,7 +4,17 @@
       "id": "gpon",
       "hex": "837c",
       "op": "opc_gpon",
-      "fields": { "opcode": 131 }
+      "fields": {
+        "opcode": 131
+      }
+    },
+    {
+      "id": "gpoff",
+      "hex": "827d",
+      "op": "opc_gpoff",
+      "fields": {
+        "opcode": 130
+      }
     }
   ]
 }

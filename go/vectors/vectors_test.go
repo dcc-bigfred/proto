@@ -22,11 +22,17 @@ func TestLoadGpon(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(f.Cases) != 1 {
-		t.Fatalf("cases = %d, want 1", len(f.Cases))
+	var gpon *Case
+	for i := range f.Cases {
+		if f.Cases[i].ID == "gpon" {
+			gpon = &f.Cases[i]
+			break
+		}
 	}
-	c := f.Cases[0]
-	if c.ID != "gpon" || c.Hex != "837c" || c.Op != "opc_gpon" {
-		t.Fatalf("unexpected case: %+v", c)
+	if gpon == nil {
+		t.Fatal("missing gpon case")
+	}
+	if gpon.Hex != "837c" || gpon.Op != "opc_gpon" {
+		t.Fatalf("unexpected case: %+v", gpon)
 	}
 }

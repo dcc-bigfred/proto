@@ -1,0 +1,58 @@
+{
+  "cases": [
+    {
+      "id": "get_serial",
+      "hex": "04001000",
+      "op": "get_serial"
+    },
+    {
+      "id": "set_drive_3_50_fwd_128",
+      "hex": "0a004000e4130003b246",
+      "op": "set_drive",
+      "fields": {
+        "addr": 3,
+        "forward": true,
+        "speed": 50,
+        "steps": 128
+      }
+    },
+    {
+      "id": "set_drive_stop_fwd",
+      "hex": "0a004000e41300038074",
+      "op": "set_drive",
+      "fields": {
+        "addr": 3,
+        "forward": true,
+        "speed": 0,
+        "steps": 128
+      }
+    },
+    {
+      "id": "set_fn_f0_on",
+      "hex": "0a004000e4f80003405f",
+      "op": "set_function",
+      "fields": {
+        "addr": 3,
+        "fn": 0,
+        "on": true
+      }
+    },
+    {
+      "id": "loco_info_3_50_fwd_f0",
+      "hex": "0f004000ef000304b210000000004a",
+      "op": "loco_info",
+      "fields": {
+        "addr": 3,
+        "forward": true,
+        "functions": 1,
+        "speed": 50,
+        "steps": 128
+      }
+    },
+    {
+      "id": "broadcast_flags",
+      "hex": "0800500001000100",
+      "op": "set_broadcast_flags"
+    }
+  ]
+}

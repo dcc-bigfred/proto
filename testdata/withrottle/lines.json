@@ -1,0 +1,53 @@
+{
+  "cases": [
+    {
+      "id": "hu",
+      "hex": "485570726f746f",
+      "op": "hu"
+    },
+    {
+      "id": "acquire_s3",
+      "hex": "4d302b53333c3b3e5333",
+      "op": "acquire",
+      "fields": {
+        "addr": 3
+      }
+    },
+    {
+      "id": "set_speed_50",
+      "hex": "4d304153333c3b3e563530",
+      "op": "set_speed",
+      "fields": {
+        "addr": 3,
+        "speed": 50
+      }
+    },
+    {
+      "id": "set_dir_fwd",
+      "hex": "4d304153333c3b3e5231",
+      "op": "set_direction",
+      "fields": {
+        "addr": 3,
+        "forward": true
+      }
+    },
+    {
+      "id": "set_fn_f0_on",
+      "hex": "4d304153333c3b3e663130",
+      "op": "set_function",
+      "fields": {
+        "addr": 3,
+        "fn": 0,
+        "on": true
+      }
+    },
+    {
+      "id": "track_power_on",
+      "hex": "50504131",
+      "op": "track_power",
+      "fields": {
+        "on": true
+      }
+    }
+  ]
+}
