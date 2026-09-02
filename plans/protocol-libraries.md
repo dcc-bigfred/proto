@@ -220,18 +220,17 @@ no_std without alloc, `#[test]` on `testdata/`, `vectors-fresh` job.
 
 ## Docs
 
-Protocol canon: `proto/docs/{loconet,z21,withrottle}.md` (copy from
-`dcc-bigfred/docs` specs). `ARCHITECTURE.md` describes the library, not
-Digitrax/JMRI. The `dcc-bigfred/docs` repo is not edited; drift between the
-two copies is accepted until cutover.
+Protocol canon: `proto/docs/{loconet,z21,withrottle}.md` (moved from
+`dcc-bigfred/docs`). `ARCHITECTURE.md` describes the library, not
+Digitrax/JMRI. The docs site keeps stubs at the old paths that point here.
 
 ## Later — separate plans
 
 - **BigFred cutover:** `require github.com/dcc-bigfred/proto/go`, type aliases
   in `pkgs/loco/commandstation`, `DriveHost` ↔ `InboundDrivePort` + pairing in
   dcc-bus, `telemetry.Register*` instead of local mapping, new
-  `withrottle` kind in `station.Open`, delete the old copy, Grafana `proto.*`,
-  docs stubs pointing at `proto/docs`.
+  `withrottle` kind in `station.Open`, delete the old copy, Grafana `proto.*`.
+  Protocol specs already live in `proto/docs`; the docs site has stubs.
 - **LongFred cutover:** replace `crates/proto/{z21,withrottle}` with crates
   from this repo.
 - **Virtual LocoNet station:** opcode interpreter → `DriveHost`, slot table,
