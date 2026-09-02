@@ -1,0 +1,11 @@
+[package]
+name = "dcc-proto-loconet"
+description = "Experimental LocoNet gateway crate (std dummy)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true

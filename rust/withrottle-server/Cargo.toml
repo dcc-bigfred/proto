@@ -1,0 +1,14 @@
+[package]
+name = "dcc-proto-withrottle-server"
+description = "Experimental WiThrottle TCP server (std)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+dcc-proto-withrottle.workspace = true

@@ -1,6 +1,14 @@
 [workspace]
 resolver = "2"
-members = ["z21", "withrottle"]
+members = [
+    "z21",
+    "withrottle",
+    "z21-server",
+    "withrottle-server",
+    "loconet",
+    "commandstation",
+    "interop",
+]
 
 [workspace.package]
 version = "0.1.0"
@@ -10,6 +18,8 @@ license = "Apache-2.0"
 
 [workspace.dependencies]
 heapless = { version = "0.8", default-features = false }
+dcc-proto-z21 = { path = "z21" }
+dcc-proto-withrottle = { path = "withrottle" }
 
 [workspace.lints.rust]
 missing_docs = "warn"

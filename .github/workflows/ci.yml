@@ -47,7 +47,27 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Test
-        run: cargo test
+        run: cargo test --workspace --exclude dcc-proto-interop
+
+  interop:
+    name: Interop
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.0"
+          cache-dependency-path: go/go.sum
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust client against Go Listen
+        working-directory: rust
+        run: cargo test -p dcc-proto-interop -- --test-threads=1
 
   vectors-fresh:
     name: Vectors

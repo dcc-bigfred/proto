@@ -9,6 +9,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1fd0f2584146f6f2ef48085050886acf353beff7305ebd1ae69500e27c67f64b"
 
 [[package]]
+name = "dcc-proto-commandstation"
+version = "0.1.0"
+
+[[package]]
+name = "dcc-proto-interop"
+version = "0.1.0"
+dependencies = [
+ "dcc-proto-withrottle",
+ "dcc-proto-z21",
+]
+
+[[package]]
+name = "dcc-proto-loconet"
+version = "0.1.0"
+
+[[package]]
 name = "dcc-proto-withrottle"
 version = "0.1.0"
 dependencies = [
@@ -16,9 +32,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "dcc-proto-withrottle-server"
+version = "0.1.0"
+dependencies = [
+ "dcc-proto-withrottle",
+]
+
+[[package]]
 name = "dcc-proto-z21"
 version = "0.1.0"
 dependencies = [
+ "heapless",
+]
+
+[[package]]
+name = "dcc-proto-z21-server"
+version = "0.1.0"
+dependencies = [
+ "dcc-proto-z21",
  "heapless",
 ]
 

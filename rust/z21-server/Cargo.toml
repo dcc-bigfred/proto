@@ -1,0 +1,15 @@
+[package]
+name = "dcc-proto-z21-server"
+description = "Experimental Z21 UDP server (std)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+dcc-proto-z21.workspace = true
+heapless.workspace = true
