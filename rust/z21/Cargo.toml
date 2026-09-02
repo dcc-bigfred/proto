@@ -1,0 +1,13 @@
+[package]
+name = "dcc-proto-z21"
+description = "Z21 LAN client codec (no_std, no alloc)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+heapless.workspace = true

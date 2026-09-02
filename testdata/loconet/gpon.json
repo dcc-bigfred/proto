@@ -1,0 +1,10 @@
+{
+  "cases": [
+    {
+      "id": "gpon",
+      "hex": "837c",
+      "op": "opc_gpon",
+      "fields": { "opcode": 131 }
+    }
+  ]
+}
