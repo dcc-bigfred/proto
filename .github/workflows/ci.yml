@@ -31,14 +31,14 @@ jobs:
         run: go vet ./...
 
       - name: Test
-        run: go test -json -count=1 ./... | tee "${{ github.workspace }}/go-test.json"
+        run: go run gotest.tools/gotestsum@latest --junitfile "${{ github.workspace }}/go-junit.xml" --format pkgname -- -count=1 ./...
 
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: test-results-go
-          path: go-test.json
+          path: go-junit.xml
           if-no-files-found: ignore
 
   rust-test:
@@ -173,6 +173,4 @@ jobs:
         with:
           check_name: Test results
           comment_title: Test results
-          files: |
-            reports/**/*.xml
-            reports/**/*.json
+          files: reports/**/*.xml
