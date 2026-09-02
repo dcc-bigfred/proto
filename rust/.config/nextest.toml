@@ -1,0 +1,15 @@
+[profile.ci]
+fail-fast = false
+
+[profile.ci.junit]
+path = "junit.xml"
+report-name = "rust"
+store-failure-output = true
+
+[profile.interop]
+fail-fast = false
+
+[profile.interop.junit]
+path = "junit.xml"
+report-name = "interop"
+store-failure-output = true

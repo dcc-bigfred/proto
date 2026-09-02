@@ -14,8 +14,9 @@ import (
 )
 
 var (
-	_ Station          = (*LocoNet)(nil)
-	_ EmergencyStopper = (*LocoNet)(nil)
+	_ Station              = (*LocoNet)(nil)
+	_ EmergencyStopper     = (*LocoNet)(nil)
+	_ TrackPowerController = (*LocoNet)(nil)
 )
 
 type lnTransport interface {

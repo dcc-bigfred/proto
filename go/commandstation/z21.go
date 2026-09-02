@@ -15,8 +15,9 @@ import (
 )
 
 var (
-	_ Station          = (*Z21Roco)(nil)
-	_ EmergencyStopper = (*Z21Roco)(nil)
+	_ Station              = (*Z21Roco)(nil)
+	_ EmergencyStopper     = (*Z21Roco)(nil)
+	_ TrackPowerController = (*Z21Roco)(nil)
 )
 
 // z21 broadcast flags (LAN_SET_BROADCASTFLAGS, §2.16).

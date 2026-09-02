@@ -218,19 +218,20 @@ On LocoNet, an e-stop against a free slot may briefly acquire a slot only for th
 
 ## Track power (optional)
 
+Track power is not part of `Station`. Type-assert `TrackPowerController` — only Z21, LocoNet, and WiThrottle implement it (`StubStation` does not). A missing interface means the driver cannot switch power; `ErrTrackPowerUnsupported` is returned by a connected driver that implements the interface but cannot send the command (for example a nil or disconnected Z21).
+
 ```go
-if tp, ok := st.(commandstation.TrackPowerController); ok {
-	if err := tp.SetTrackPower(true); err != nil {
-		log.Fatal(err)
-	}
-	// …
-	_ = tp.SetTrackPower(false)
-} else {
-	// commandstation.ErrTrackPowerUnsupported when the driver does not support it
+tp, ok := st.(commandstation.TrackPowerController)
+if !ok {
+	log.Fatal("station cannot switch track power")
 }
+if err := tp.SetTrackPower(true); err != nil {
+	log.Fatal(err)
+}
+_ = tp.SetTrackPower(false)
 ```
 
-Supported by: LocoNet (`GPON`/`GPOFF`), Z21 (`LAN_X_SET_TRACK_POWER_*`), WiThrottle (`PPA`/`PPN`).
+Wire verbs: LocoNet `OPC_GPON` / `OPC_GPOFF`, Z21 `LAN_X_SET_TRACK_POWER_*`, WiThrottle `PPA1` / `PPA0`.
 
 ## Complete example
 
@@ -299,4 +300,5 @@ On older Z21 firmware, also call `SubscribeLocoInfo(addr)` (`LocoInfoSubscriber`
 
 - Integration tests in `go/commandstation/*_test.go` and `go/z21/roundtrip_test.go`
 - Protocol specifications: [`docs/z21.md`](../z21.md), [`docs/loconet.md`](../loconet.md), [`docs/withrottle.md`](../withrottle.md)
+- Rust codecs (no sockets): [`docs/rust/README.md`](../rust/README.md)
 - Run tests: `make test-go` from the repository root

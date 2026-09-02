@@ -31,7 +31,15 @@ jobs:
         run: go vet ./...
 
       - name: Test
-        run: go test -count=1 ./...
+        run: go test -json -count=1 ./... | tee "${{ github.workspace }}/go-test.json"
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-go
+          path: go-test.json
+          if-no-files-found: ignore
 
   rust-test:
     name: Rust
@@ -46,8 +54,21 @@ jobs:
       - name: Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Install nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: nextest
+
       - name: Test
-        run: cargo test --workspace --exclude dcc-proto-interop
+        run: cargo nextest run --workspace --exclude dcc-proto-interop --profile ci
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-rust
+          path: rust/target/nextest/ci/junit.xml
+          if-no-files-found: ignore
 
   rust-nostd:
     name: Rust no_std
@@ -86,6 +107,11 @@ jobs:
       - name: Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Install nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: nextest
+
       - name: Build loopback host
         working-directory: go
         run: mkdir -p ../rust/target && go build -o ../rust/target/loopback-host ./cmd/loopback-host
@@ -94,7 +120,15 @@ jobs:
         working-directory: rust
         env:
           PROTO_LOOPBACK_HOST: ${{ github.workspace }}/rust/target/loopback-host
-        run: cargo test -p dcc-proto-interop -- --test-threads=1
+        run: cargo nextest run -p dcc-proto-interop --profile interop --test-threads=1
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-interop
+          path: rust/target/nextest/interop/junit.xml
+          if-no-files-found: ignore
 
   vectors-fresh:
     name: Vectors
@@ -115,3 +149,30 @@ jobs:
 
       - name: Unchanged
         run: git diff --exit-code testdata
+
+  test-report:
+    name: Test report
+    runs-on: ubuntu-latest
+    needs: [go-test, rust-test, interop]
+    if: always()
+    permissions:
+      contents: read
+      actions: read
+      checks: write
+      pull-requests: write
+    steps:
+      - name: Download test results
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          pattern: test-results-*
+          path: reports
+
+      - name: Publish
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        with:
+          check_name: Test results
+          comment_title: Test results
+          files: |
+            reports/**/*.xml
+            reports/**/*.json

@@ -14,6 +14,7 @@ type wtHost struct {
 	mu     sync.Mutex
 	speeds []drive.LocoState
 	locos  map[uint16]drive.LocoState
+	power  *bool
 }
 
 func (h *wtHost) SetSpeed(_ drive.ClientID, addr uint16, speed uint8, forward bool, steps uint8) error {
@@ -40,7 +41,12 @@ func (h *wtHost) LocoState(addr uint16) (drive.LocoState, error) {
 	}
 	return drive.LocoState{Addr: addr, Steps: 128, Forward: true}, nil
 }
-func (h *wtHost) SetTrackPower(drive.ClientID, bool) error { return nil }
+func (h *wtHost) SetTrackPower(_ drive.ClientID, on bool) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.power = &on
+	return nil
+}
 func (h *wtHost) Release(drive.ClientID, uint16)           {}
 
 func TestNewWiThrottleLoopback(t *testing.T) {
@@ -80,6 +86,26 @@ func TestNewWiThrottleLoopback(t *testing.T) {
 
 	if err := st.SendFn(MainTrackMode, 3, 0, false); err != nil {
 		t.Fatal(err)
+	}
+
+	if err := st.SetTrackPower(true); err != nil {
+		t.Fatal(err)
+	}
+	deadline = time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		host.mu.Lock()
+		ok := host.power != nil && *host.power
+		host.mu.Unlock()
+		if ok {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	host.mu.Lock()
+	power := host.power
+	host.mu.Unlock()
+	if power == nil || !*power {
+		t.Fatalf("SetTrackPower = %v", power)
 	}
 
 	if err := st.EmergencyStop(3, true); err != nil {
