@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/sirupsen/logrus"
+
+	"github.com/dcc-bigfred/proto/go/z21"
 )
 
 // z21 broadcast flags (LAN_SET_BROADCASTFLAGS, §2.16).
@@ -17,13 +19,13 @@ const (
 	// z21BcDrivingSwitching delivers LAN_X_LOCO_INFO for *subscribed*
 	// locos (those queried via LAN_X_GET_LOCO_INFO) plus track power /
 	// stop broadcasts.
-	z21BcDrivingSwitching uint32 = 0x00000001
+	z21BcDrivingSwitching uint32 = z21.BcDrivingSwitching
 	// z21BcAllLocos extends the flag above so the Z21 pushes
 	// LAN_X_LOCO_INFO for *every* modified loco without per-address
 	// subscription (FW ≥ 1.20). This is the flag intended for "PC
 	// railroad automation software" — exactly dcc-bus's role — so it can
 	// mirror changes made by external handsets it never subscribed to.
-	z21BcAllLocos uint32 = 0x00010000
+	z21BcAllLocos uint32 = z21.BcAllLocos
 )
 
 const (
@@ -375,7 +377,7 @@ func (z *Z21Roco) readLoop() {
 				continue
 			}
 		}
-		for _, pkt := range splitZ21Datagram(buf[:n]) {
+		for _, pkt := range z21.SplitDatagram(buf[:n]) {
 			z.handlePacket(pkt)
 		}
 	}
@@ -479,36 +481,19 @@ func (z *Z21Roco) awaitMatching(timeout time.Duration, match func(pkt []byte) bo
 // it carries. Each packet is length-prefixed by its little-endian
 // DataLen, and the Z21 may batch several into one datagram.
 func splitZ21Datagram(b []byte) [][]byte {
-	var out [][]byte
-	for len(b) >= 4 {
-		l := int(binary.LittleEndian.Uint16(b[0:2]))
-		if l < 4 || l > len(b) {
-			break
-		}
-		out = append(out, b[:l])
-		b = b[l:]
-	}
-	return out
+	return z21.SplitDatagram(b)
 }
 
 // parseLocoInfoPacket decodes a complete LAN_X_LOCO_INFO packet (0xEF)
 // into address, function bits and speed/direction. ok is false for any
 // other packet.
 func parseLocoInfoPacket(pkt []byte) (addr LocoAddr, state fnState, speed uint8, forward bool, ok bool) {
-	if len(pkt) < 10 {
+	info, ok := z21.ParseLocoInfo(pkt)
+	if !ok {
 		return 0, fnState{}, 0, false, false
 	}
-	dataLen := binary.LittleEndian.Uint16(pkt[0:2])
-	header := binary.LittleEndian.Uint16(pkt[2:4])
-	if header != 0x0040 || int(dataLen) != len(pkt) {
-		return 0, fnState{}, 0, false, false
-	}
-	if pkt[4] != 0xEF {
-		return 0, fnState{}, 0, false, false
-	}
-	addr = LocoAddr(uint16(pkt[5]&0x3F)<<8 | uint16(pkt[6]))
-	speed, forward = decodeLocoDriveFromLocoInfo(pkt[7], pkt[8])
-
+	addr = LocoAddr(info.Addr)
+	speed, forward = info.Speed, info.Forward
 	if len(pkt) > 9 {
 		state.B0_4 = pkt[9]
 	}
@@ -943,66 +928,12 @@ func (z *Z21Roco) GetSpeed(addr LocoAddr) (uint8, bool, error) {
 // direction every time it stops. Stop is therefore R + V=0, E-Stop is
 // R + V=1.
 func encodeLocoDriveDB3(speed uint8, forward bool, speedSteps uint8) byte {
-	var db3 byte
-	if forward {
-		db3 = 0x80
-	}
-
-	switch speed {
-	case 0:
-		return db3 // Stop: R + V=0
-	case 1:
-		return db3 | 0x01 // E-Stop: R + V=1
-	}
-
-	switch speedSteps {
-	case 0: // DCC 14
-		if speed > 15 {
-			speed = 15
-		}
-		db3 |= speed & 0x0F
-	case 2: // DCC 28
-		if speed > 28 {
-			speed = 28
-		}
-		speedBits := byte((speed + 3) / 2)
-		speedBit5 := byte((speed + 3) % 2)
-		db3 |= (speedBit5 << 4) | (speedBits & 0x0F)
-	default: // DCC 128 (speedSteps proto 3, or any unknown mode)
-		if speed > 127 {
-			speed = 127
-		}
-		db3 |= speed & 0x7F
-	}
-	return db3
+	return z21.EncodeDriveDB3(speed, forward, speedSteps)
 }
 
 // decodeLocoDriveFromLocoInfo decodes DB2/DB3 from LAN_X_LOCO_INFO (§4.4).
 // DB3 is RVVVVVVV: bit 7 = direction (1=forward), low bits = speed.
 // DB2 low 3 bits (KKK) select 14 / 28 / 128 speed-step encoding.
 func decodeLocoDriveFromLocoInfo(db2, db3 byte) (speed uint8, forward bool) {
-	forward = (db3 & 0x80) != 0
-	v := db3 & 0x7F
-
-	switch db2 & 0x07 {
-	case 0: // DCC 14
-		return v & 0x0F, forward
-	case 2: // DCC 28
-		// V uses the interleaved V5 bit. Stop / Stop1 (raw 0/1) and
-		// E-Stop / E-Stop1 (raw 2/3) map to speed 0 / 1; direction stays
-		// in the R bit regardless.
-		speedBits := v & 0x0F
-		speedBit5 := (v >> 4) & 0x01
-		raw := int(speedBits)*2 + int(speedBit5)
-		switch {
-		case raw <= 1:
-			return 0, forward
-		case raw <= 3:
-			return 1, forward
-		default:
-			return uint8(raw - 3), forward
-		}
-	default: // DCC 128 (KKK=4)
-		return v, forward
-	}
+	return z21.DecodeDriveFromLocoInfo(db2, db3)
 }

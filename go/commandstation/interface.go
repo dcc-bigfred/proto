@@ -172,6 +172,10 @@ type TrackPowerController interface {
 // ErrTrackPowerUnsupported is returned when the station cannot switch track power.
 var ErrTrackPowerUnsupported = errors.New("commandstation: track power not supported")
 
+// ErrUnsupported is returned for Station operations the protocol cannot
+// express (WiThrottle has no CV programming).
+var ErrUnsupported = errors.New("commandstation: operation not supported")
+
 // CV number
 type CVNum uint16
 
