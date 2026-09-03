@@ -1,4 +1,4 @@
-//! WiThrottle client codec.
+//! WiThrottle client protocol.
 //!
 //! `no_std`, no `alloc`, no sockets. The host owns the TCP stream.
 #![cfg_attr(not(test), no_std)]

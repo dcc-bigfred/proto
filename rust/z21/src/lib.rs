@@ -1,4 +1,4 @@
-//! Z21 LAN client codec.
+//! Z21 LAN client protocol.
 //!
 //! `no_std`, no `alloc`, no sockets. The host (LongFred firmware, or a `std`
 //! test) owns UDP.

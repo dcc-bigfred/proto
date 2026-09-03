@@ -300,5 +300,5 @@ On older Z21 firmware, also call `SubscribeLocoInfo(addr)` (`LocoInfoSubscriber`
 
 - Integration tests in `go/commandstation/*_test.go` and `go/z21/roundtrip_test.go`
 - Protocol specifications: [`docs/z21.md`](../z21.md), [`docs/loconet.md`](../loconet.md), [`docs/withrottle.md`](../withrottle.md)
-- Rust codecs (no sockets): [`docs/rust/README.md`](../rust/README.md)
+- Rust protocols (no sockets): [`docs/rust/README.md`](../rust/README.md)
 - Run tests: `make test-go` from the repository root

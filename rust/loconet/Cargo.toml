@@ -1,10 +1,12 @@
 [package]
-name = "dcc-proto-loconet"
+name = "dcc-bigfred-proto-loconet"
 description = "Experimental LocoNet gateway crate (std dummy)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 publish = false
 
 [lints]

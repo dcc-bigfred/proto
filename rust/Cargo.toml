@@ -15,11 +15,13 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.75"
 license = "Apache-2.0"
+repository = "https://github.com/dcc-bigfred/proto"
+homepage = "https://github.com/dcc-bigfred/proto"
 
 [workspace.dependencies]
 heapless = { version = "0.8", default-features = false }
-dcc-proto-z21 = { path = "z21" }
-dcc-proto-withrottle = { path = "withrottle" }
+dcc-bigfred-proto-z21 = { path = "z21" }
+dcc-bigfred-proto-withrottle = { path = "withrottle" }
 
 [workspace.lints.rust]
 missing_docs = "warn"

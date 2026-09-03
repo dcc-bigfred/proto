@@ -2,28 +2,28 @@
 
 Libraries for talking to model-railroad command stations over **LocoNet**, **Z21 LAN**, and **WiThrottle**. Use them when you build throttles, automation, or firmware that must drive locos, toggle functions, program CVs, or switch track power — without re-implementing wire formats.
 
-Go provides connected **clients** and test **servers**. Rust provides **`no_std` codecs** for embedded targets (LongFred); the host owns sockets. Both languages share the same [golden test vectors](testdata/).
+Go provides connected **clients** and test **servers**. Rust provides **`no_std` protocol** crates for embedded targets (LongFred); the host owns sockets. Both languages share the same [golden test vectors](testdata/).
 
 ## Features
 
 - **Unified drive API (Go)** — `SetSpeed`, `GetSpeed`, `SendFn`, `ListFunctions`, `EmergencyStop`, CV read/write, optional track power and LocoNet slot management
 - **Three transports** — Z21 (UDP), LocoNet (serial / TCP), WiThrottle (TCP)
 - **LAN autodetection (Go)** — scan a /24 for Z21, WiThrottle, and LocoNet-over-TCP
-- **Protocol codecs** — frame encode/decode, checksums, WiThrottle line grammar; Rust crates are `no_std`, no `alloc`
+- **Protocol libraries** — frame encode/decode, checksums, WiThrottle line grammar; Rust crates are `no_std`, no `alloc`
 - **Loopback servers (Go)** — Z21 UDP and WiThrottle TCP for tests and interop
 - **LocoNet gateway (Go)** — fan-out upstream bus to binary/ASCII TCP listeners
 - **Shared vectors** — `go run ./cmd/gen-vectors` writes `testdata/`; Go and Rust tests must match
-- **CI interop** — Rust codec ↔ Go `Listen` on every push
+- **CI interop** — Rust protocol crate ↔ Go `Listen` on every push
 - **OpenTelemetry hooks (Go)** — optional driver metrics without OTel on the hot path
 
 ## Maturity
 
 | Area | Go | Rust | Notes |
 |------|:--:|:--:|-------|
-| Z21 codec | ✅ | ✅ | LAN frames, drive, functions, track power |
+| Z21 protocol | ✅ | ✅ | LAN frames, drive, functions, track power |
 | Z21 `Station` client | ✅ | — | `NewZ21Roco` |
 | Z21 server (`Listen`) | ✅ | 🧪 | Rust crate is experimental |
-| WiThrottle codec | ✅ | ✅ | Handshake, acquire, drive, fn, e-stop, track power |
+| WiThrottle protocol | ✅ | ✅ | Handshake, acquire, drive, fn, e-stop, track power |
 | WiThrottle `Station` client | ✅ | — | JMRI, DCC-EX, LNWI, RB1110 |
 | WiThrottle server | ✅ | 🧪 | Rust crate is experimental |
 | LocoNet framing + gateway | ✅ | 🧪 | Rust gateway is a stub |
@@ -40,7 +40,7 @@ Go provides connected **clients** and test **servers**. Rust provides **`no_std`
 | Document | Audience |
 |----------|----------|
 | [Go client guide](docs/go/README.md) | Connect, drive, functions, e-stop, track power |
-| [Rust codec guide](docs/rust/README.md) | `no_std` Z21 / WiThrottle from firmware or `std::net` |
+| [Rust protocol guide](docs/rust/README.md) | `no_std` Z21 / WiThrottle from firmware or `std::net` |
 | [Z21 LAN spec](docs/z21.md) | Wire format reference |
 | [LocoNet spec](docs/loconet.md) | Opcodes and framing |
 | [WiThrottle spec](docs/withrottle.md) | Line protocol reference |
@@ -58,13 +58,22 @@ cd go && go test ./...
 go get github.com/dcc-bigfred/proto/go/commandstation
 ```
 
-**Rust** — codec only (no sockets):
+**Rust** — protocol crate only (no sockets):
 
 ```bash
-cd rust && cargo test --workspace --exclude dcc-proto-interop
+cd rust && cargo test --workspace --exclude dcc-bigfred-interop
 ```
 
-Path dependency: `dcc-proto-z21`, `dcc-proto-withrottle` under [`rust/`](rust/).
+```toml
+dcc-bigfred-proto-z21 = "0.1"
+dcc-bigfred-proto-withrottle = "0.1"
+```
+
+Path dependency: `dcc-bigfred-proto-z21`, `dcc-bigfred-proto-withrottle` under [`rust/`](rust/).
+
+## Releasing (crates.io)
+
+Bump `[workspace.package] version` in [`rust/Cargo.toml`](rust/Cargo.toml), commit, then tag and push `vX.Y.Z` (e.g. `v0.1.0`). The [release workflow](.github/workflows/release.yml) publishes every crate without `publish = false` and creates a GitHub Release. Set repository secret `CARGO_REGISTRY_TOKEN`.
 
 ## License
 

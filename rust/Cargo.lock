@@ -9,23 +9,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1fd0f2584146f6f2ef48085050886acf353beff7305ebd1ae69500e27c67f64b"
 
 [[package]]
-name = "dcc-proto-commandstation"
+name = "dcc-bigfred-commandstation"
 version = "0.1.0"
 
 [[package]]
-name = "dcc-proto-interop"
+name = "dcc-bigfred-interop"
 version = "0.1.0"
 dependencies = [
- "dcc-proto-withrottle",
- "dcc-proto-z21",
+ "dcc-bigfred-proto-withrottle",
+ "dcc-bigfred-proto-z21",
 ]
 
 [[package]]
-name = "dcc-proto-loconet"
+name = "dcc-bigfred-proto-loconet"
 version = "0.1.0"
 
 [[package]]
-name = "dcc-proto-withrottle"
+name = "dcc-bigfred-proto-withrottle"
 version = "0.1.0"
 dependencies = [
  "heapless",
@@ -34,14 +34,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "dcc-proto-withrottle-server"
+name = "dcc-bigfred-proto-withrottle-server"
 version = "0.1.0"
 dependencies = [
- "dcc-proto-withrottle",
+ "dcc-bigfred-proto-withrottle",
 ]
 
 [[package]]
-name = "dcc-proto-z21"
+name = "dcc-bigfred-proto-z21"
 version = "0.1.0"
 dependencies = [
  "heapless",
@@ -50,10 +50,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "dcc-proto-z21-server"
+name = "dcc-bigfred-proto-z21-server"
 version = "0.1.0"
 dependencies = [
- "dcc-proto-z21",
+ "dcc-bigfred-proto-z21",
  "heapless",
 ]
 

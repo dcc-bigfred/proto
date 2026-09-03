@@ -1,33 +1,39 @@
-# Rust libraries — Z21 and WiThrottle codecs
+# Rust libraries — Z21 and WiThrottle protocols
 
-The production Rust crates encode and decode wire bytes. They are `#![no_std]`, have no `alloc`, and **do not open sockets**. Firmware (LongFred) or a `std` host owns UDP/TCP (`embassy-net`, `std::net`, …) and feeds the codec.
+The production Rust crates encode and decode wire bytes. They are `#![no_std]`, have no `alloc`, and **do not open sockets**. Firmware (LongFred) or a `std` host owns UDP/TCP (`embassy-net`, `std::net`, …) and feeds the protocol library.
 
-Same wire semantics as the [Go `commandstation` client](../go/README.md). There is no connected `NewZ21Roco` / `NewWiThrottle` equivalent yet — `dcc-proto-commandstation` is an experimental stub.
+Same wire semantics as the [Go `commandstation` client](../go/README.md). There is no connected `NewZ21Roco` / `NewWiThrottle` equivalent yet — `dcc-bigfred-commandstation` is an experimental stub.
 
 | Crate | Role |
 |-------|------|
-| [`dcc-proto-z21`](../../rust/z21) | Z21 LAN codec (UDP datagrams) |
-| [`dcc-proto-withrottle`](../../rust/withrottle) | WiThrottle codec (TCP lines) |
-| `dcc-proto-commandstation` | Experimental `Station` trait + `Stub` (no I/O) |
-| `dcc-proto-loconet` | Experimental gateway stub (real gateway is Go) |
-| `dcc-proto-z21-server` / `dcc-proto-withrottle-server` | Experimental `std` listeners |
+| [`dcc-bigfred-proto-z21`](../../rust/z21) | Z21 LAN protocol (UDP datagrams) |
+| [`dcc-bigfred-proto-withrottle`](../../rust/withrottle) | WiThrottle protocol (TCP lines) |
+| `dcc-bigfred-commandstation` | Experimental `Station` trait + `Stub` (no I/O) |
+| `dcc-bigfred-proto-loconet` | Experimental gateway stub (real gateway is Go) |
+| `dcc-bigfred-proto-z21-server` / `dcc-bigfred-proto-withrottle-server` | Experimental `std` listeners |
 
 Requires Rust ≥ 1.75.
 
 ## Installation
 
-From this repository (crates are not published to crates.io):
+```toml
+[dependencies]
+dcc-bigfred-proto-z21 = "0.1"
+dcc-bigfred-proto-withrottle = "0.1"
+```
+
+From this repository:
 
 ```toml
 [dependencies]
-dcc-proto-z21 = { git = "https://github.com/dcc-bigfred/proto.git", path = "rust/z21" }
-dcc-proto-withrottle = { git = "https://github.com/dcc-bigfred/proto.git", path = "rust/withrottle" }
+dcc-bigfred-proto-z21 = { git = "https://github.com/dcc-bigfred/proto.git", path = "rust/z21" }
+dcc-bigfred-proto-withrottle = { git = "https://github.com/dcc-bigfred/proto.git", path = "rust/withrottle" }
 ```
 
 Path dependency inside the workspace:
 
 ```toml
-dcc-proto-z21 = { path = "../z21" }
+dcc-bigfred-proto-z21 = { path = "../z21" }
 ```
 
 Output goes into a bounded `heapless` buffer (`WireBuf`, 256 bytes). `Error::BufferFull` means the buffer had no remaining capacity.
@@ -45,7 +51,7 @@ The client shape is the same for both protocols:
 `Client::on_connect` writes `LAN_GET_SERIAL_NUMBER` plus `LAN_SET_BROADCASTFLAGS` (`0x00010001`: driving + all locos).
 
 ```rust
-use dcc_proto_z21 as z21;
+use dcc_bigfred_proto_z21 as z21;
 use std::net::UdpSocket;
 
 fn connect_z21(addr: &str) -> std::io::Result<(UdpSocket, z21::Client)> {
@@ -79,7 +85,7 @@ Works with JMRI, DCC-EX, LNWI, RB1110. `Client::new(name, id)` becomes `N` / `HU
 Acquire a locomotive before speed, functions, or e-stop (`M0+`).
 
 ```rust
-use dcc_proto_withrottle as wt;
+use dcc_bigfred_proto_withrottle as wt;
 use std::io::Write;
 use std::net::TcpStream;
 
@@ -202,7 +208,7 @@ send(
 )?;
 ```
 
-There is no CV programming in either codec (no `ReadCV` / `WriteCV` on the wire API).
+There is no CV programming in either protocol (no `ReadCV` / `WriteCV` on the wire API).
 
 ## Emergency stop
 
@@ -247,7 +253,7 @@ WiThrottle also reports layout power inbound as `Event::TrackPower { on }`.
 ## Complete example (Z21 over `std::net`)
 
 ```rust
-use dcc_proto_z21 as z21;
+use dcc_bigfred_proto_z21 as z21;
 use std::net::UdpSocket;
 use std::time::Duration;
 
@@ -305,7 +311,7 @@ fn main() -> std::io::Result<()> {
 
 ## Experimental `Station` stub
 
-`dcc-proto-commandstation` exposes a `Station` trait aligned with Go (`set_speed`, `get_speed`, `send_fn`, `read_cv`, `write_cv`, `emergency_stop`). Only `Stub` implements it: in-memory speed/direction, CV ops return `Unsupported`, e-stop is speed 0. It does not dial a command station.
+`dcc-bigfred-commandstation` exposes a `Station` trait aligned with Go (`set_speed`, `get_speed`, `send_fn`, `read_cv`, `write_cv`, `emergency_stop`). Only `Stub` implements it: in-memory speed/direction, CV ops return `Unsupported`, e-stop is speed 0. It does not dial a command station.
 
 ## Not supported in Rust yet
 
@@ -317,8 +323,8 @@ fn main() -> std::io::Result<()> {
 ## Tests and further reading
 
 - Golden vectors: `testdata/z21/*.json`, `testdata/withrottle/*.json` (shared with Go)
-- Codec unit tests in `rust/z21` and `rust/withrottle`
-- Network interop (Rust codec ↔ Go `Listen`): `make test-interop`
+- Protocol unit tests in `rust/z21` and `rust/withrottle`
+- Network interop (Rust protocol crate ↔ Go `Listen`): `make test-interop`
 - Protocol specifications: [`docs/z21.md`](../z21.md), [`docs/withrottle.md`](../withrottle.md)
 - Architecture: [`ARCHITECTURE.md`](../../ARCHITECTURE.md)
 - Run crate tests: `make test-rust` from the repository root

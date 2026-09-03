@@ -1,14 +1,16 @@
 [package]
-name = "dcc-proto-withrottle-server"
+name = "dcc-bigfred-proto-withrottle-server"
 description = "Experimental WiThrottle TCP server (std)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 publish = false
 
 [lints]
 workspace = true
 
 [dependencies]
-dcc-proto-withrottle.workspace = true
+dcc-bigfred-proto-withrottle.workspace = true

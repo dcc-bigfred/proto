@@ -1,10 +1,16 @@
 [package]
-name = "dcc-proto-z21"
-description = "Z21 LAN client codec (no_std, no alloc)"
+name = "dcc-bigfred-proto-z21"
+description = "Z21 LAN client protocol (no_std, no alloc)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+keywords = ["dcc", "z21", "model-railroad", "no-std"]
+categories = ["embedded", "encoding"]
+include = ["src/**", "Cargo.toml", "README.md", "LICENSE"]
 
 [lints]
 workspace = true

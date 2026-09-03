@@ -1,7 +1,7 @@
 //! Experimental WiThrottle TCP server. Public API mirrors Go `withrottle.Listen`.
 #![allow(missing_docs)]
 
-use dcc_proto_withrottle as wt;
+use dcc_bigfred_proto_withrottle as wt;
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream, SocketAddr};
 use std::sync::atomic::{AtomicBool, Ordering};

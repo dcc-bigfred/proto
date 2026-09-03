@@ -60,7 +60,7 @@ jobs:
           tool: nextest
 
       - name: Test
-        run: cargo nextest run --workspace --exclude dcc-proto-interop --profile ci
+        run: cargo nextest run --workspace --exclude dcc-bigfred-interop --profile ci
 
       - name: Upload test results
         if: always()
@@ -86,10 +86,10 @@ jobs:
           targets: thumbv7em-none-eabihf, riscv32imac-unknown-none-elf
 
       - name: Thumb
-        run: cargo build -p dcc-proto-z21 -p dcc-proto-withrottle --target thumbv7em-none-eabihf
+        run: cargo build -p dcc-bigfred-proto-z21 -p dcc-bigfred-proto-withrottle --target thumbv7em-none-eabihf
 
       - name: RISC-V
-        run: cargo build -p dcc-proto-z21 -p dcc-proto-withrottle --target riscv32imac-unknown-none-elf
+        run: cargo build -p dcc-bigfred-proto-z21 -p dcc-bigfred-proto-withrottle --target riscv32imac-unknown-none-elf
 
   interop:
     name: Interop
@@ -120,7 +120,7 @@ jobs:
         working-directory: rust
         env:
           PROTO_LOOPBACK_HOST: ${{ github.workspace }}/rust/target/loopback-host
-        run: cargo nextest run -p dcc-proto-interop --profile interop --test-threads=1
+        run: cargo nextest run -p dcc-bigfred-interop --profile interop --test-threads=1
 
       - name: Upload test results
         if: always()

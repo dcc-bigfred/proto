@@ -1,15 +1,17 @@
 [package]
-name = "dcc-proto-interop"
+name = "dcc-bigfred-interop"
 description = "Rust client ↔ Go server loopback tests"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 publish = false
 
 [lints]
 workspace = true
 
 [dependencies]
-dcc-proto-z21.workspace = true
-dcc-proto-withrottle.workspace = true
+dcc-bigfred-proto-z21.workspace = true
+dcc-bigfred-proto-withrottle.workspace = true

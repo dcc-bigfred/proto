@@ -1,10 +1,12 @@
 [package]
-name = "dcc-proto-commandstation"
+name = "dcc-bigfred-commandstation"
 description = "Experimental command-station client crate (std dummy)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 publish = false
 
 [lints]

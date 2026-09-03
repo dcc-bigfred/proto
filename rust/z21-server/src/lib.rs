@@ -1,7 +1,7 @@
 //! Experimental Z21 LAN UDP server. Public API mirrors Go `z21.Listen`.
 #![allow(missing_docs)]
 
-use dcc_proto_z21 as z21;
+use dcc_bigfred_proto_z21 as z21;
 use std::net::{SocketAddr, UdpSocket};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};

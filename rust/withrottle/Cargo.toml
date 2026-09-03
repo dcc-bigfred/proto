@@ -1,10 +1,16 @@
 [package]
-name = "dcc-proto-withrottle"
-description = "WiThrottle client codec (no_std, no alloc)"
+name = "dcc-bigfred-proto-withrottle"
+description = "WiThrottle client protocol (no_std, no alloc)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+keywords = ["dcc", "withrottle", "model-railroad", "no-std"]
+categories = ["embedded", "encoding"]
+include = ["src/**", "Cargo.toml", "README.md", "LICENSE"]
 
 [lints]
 workspace = true

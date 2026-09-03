@@ -1,10 +1,10 @@
-//! Network interop: Rust no_std codecs + `std::net` against Go `Listen`.
+//! Network interop: Rust no_std protocols + `std::net` against Go `Listen`.
 #![allow(missing_docs)]
 
 #[cfg(test)]
 mod tests {
-    use dcc_proto_withrottle as wt;
-    use dcc_proto_z21 as z21;
+    use dcc_bigfred_proto_withrottle as wt;
+    use dcc_bigfred_proto_z21 as z21;
     use std::io::{BufRead, BufReader, Read, Write};
     use std::net::{TcpStream, UdpSocket};
     use std::path::PathBuf;
