@@ -10,6 +10,9 @@ on:
 permissions:
   contents: read
 
+env:
+  GO_VERSION: "1.25.0"
+
 jobs:
   go-test:
     name: Go
@@ -24,14 +27,14 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.25.0"
+          go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: go/go.sum
 
       - name: Vet
-        run: go vet ./...
+        run: make vet
 
       - name: Test
-        run: go run gotest.tools/gotestsum@latest --junitfile "${{ github.workspace }}/go-junit.xml" --format pkgname -- -count=1 ./...
+        run: make test JUNITFILE="${{ github.workspace }}/go-junit.xml"
 
       - name: Upload test results
         if: always()
@@ -60,7 +63,7 @@ jobs:
           tool: nextest
 
       - name: Test
-        run: cargo nextest run --workspace --exclude dcc-bigfred-interop --profile ci
+        run: make test
 
       - name: Upload test results
         if: always()
@@ -86,10 +89,10 @@ jobs:
           targets: thumbv7em-none-eabihf, riscv32imac-unknown-none-elf
 
       - name: Thumb
-        run: cargo build -p dcc-bigfred-proto-z21 -p dcc-bigfred-proto-withrottle --target thumbv7em-none-eabihf
+        run: make thumb
 
       - name: RISC-V
-        run: cargo build -p dcc-bigfred-proto-z21 -p dcc-bigfred-proto-withrottle --target riscv32imac-unknown-none-elf
+        run: make build-risc
 
   interop:
     name: Interop
@@ -101,7 +104,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.25.0"
+          go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: go/go.sum
 
       - name: Rust toolchain
@@ -114,13 +117,13 @@ jobs:
 
       - name: Build loopback host
         working-directory: go
-        run: mkdir -p ../rust/target && go build -o ../rust/target/loopback-host ./cmd/loopback-host
+        run: make loopback-host LOOPBACK_HOST="${{ github.workspace }}/rust/target/loopback-host"
 
       - name: Rust client against Go Listen
         working-directory: rust
         env:
           PROTO_LOOPBACK_HOST: ${{ github.workspace }}/rust/target/loopback-host
-        run: cargo nextest run -p dcc-bigfred-interop --profile interop --test-threads=1
+        run: make test-interop
 
       - name: Upload test results
         if: always()
@@ -140,12 +143,12 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.25.0"
+          go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: go/go.sum
 
       - name: Generate
         working-directory: go
-        run: go run ./cmd/gen-vectors
+        run: make gen-vectors
 
       - name: Unchanged
         run: git diff --exit-code testdata

@@ -51,7 +51,8 @@ Go provides connected **clients** and test **servers**. Rust provides **`no_std`
 **Go** — full client to a command station:
 
 ```bash
-cd go && go test ./...
+make -C go test
+# or from the repo root: make test-go
 ```
 
 ```bash
@@ -61,7 +62,8 @@ go get github.com/dcc-bigfred/proto/go/commandstation
 **Rust** — protocol crate only (no sockets):
 
 ```bash
-cd rust && cargo test --workspace --exclude dcc-bigfred-interop
+make -C rust test
+# or from the repo root: make test-rust
 ```
 
 ```toml

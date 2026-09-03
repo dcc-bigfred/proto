@@ -1,14 +1,27 @@
-.PHONY: test test-go test-rust test-interop
+.PHONY: test test-go test-rust test-interop vet thumb build-risc loopback-host gen-vectors
 
 test: test-go test-rust
 
+vet:
+	$(MAKE) -C go vet
+
 test-go:
-	cd go && go test ./...
+	$(MAKE) -C go test
 
 test-rust:
-	cd rust && cargo test --workspace --exclude dcc-bigfred-interop
+	$(MAKE) -C rust test
 
-test-interop:
-	mkdir -p rust/target
-	cd go && go build -o ../rust/target/loopback-host ./cmd/loopback-host
-	cd rust && PROTO_LOOPBACK_HOST=$(CURDIR)/rust/target/loopback-host cargo test -p dcc-bigfred-interop -- --test-threads=1
+thumb:
+	$(MAKE) -C rust thumb
+
+build-risc:
+	$(MAKE) -C rust build-risc
+
+loopback-host:
+	$(MAKE) -C go loopback-host
+
+test-interop: loopback-host
+	$(MAKE) -C rust test-interop PROTO_LOOPBACK_HOST=$(CURDIR)/rust/target/loopback-host
+
+gen-vectors:
+	$(MAKE) -C go gen-vectors

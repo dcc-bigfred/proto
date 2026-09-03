@@ -327,4 +327,5 @@ fn main() -> std::io::Result<()> {
 - Network interop (Rust protocol crate ↔ Go `Listen`): `make test-interop`
 - Protocol specifications: [`docs/z21.md`](../z21.md), [`docs/withrottle.md`](../withrottle.md)
 - Architecture: [`ARCHITECTURE.md`](../../ARCHITECTURE.md)
-- Run crate tests: `make test-rust` from the repository root
+- Run crate tests: `make -C rust test` or `make test-rust` from the repository root
+- no_std builds: `make -C rust thumb` and `make -C rust build-risc`
