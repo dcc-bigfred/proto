@@ -4,6 +4,7 @@
 
 # Go
 go/vendor/
+**/go-junit.xml
 
 # Editors / OS
 .idea/

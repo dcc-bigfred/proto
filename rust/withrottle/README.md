@@ -1,5 +1,9 @@
 # dcc-bigfred-proto-withrottle
 
+<p align="center">
+  <img src="logo.png" alt="bigfred-proto" width="200">
+</p>
+
 WiThrottle **protocol** library: encode and decode TCP lines (JMRI, DCC-EX, LNWI, RB1110). `#![no_std]`, no `alloc`, no sockets. Firmware or a `std` host owns TCP and writes the `WireBuf` onto the stream.
 
 ## Install
@@ -68,6 +72,15 @@ Handshake burst typically includes `Event::Protocol`, `Event::Heartbeat`, and `E
 
 - [Rust protocol guide](https://github.com/dcc-bigfred/proto/blob/main/docs/rust/README.md)
 - [WiThrottle spec](https://github.com/dcc-bigfred/proto/blob/main/docs/withrottle.md)
+- [pkg.go.dev](https://pkg.go.dev/github.com/dcc-bigfred/proto/go/pkgs/withrottle) — same protocol in Go
+
+## Consumers
+
+This crate is built for the [dcc-bigfred](https://github.com/dcc-bigfred) stack:
+
+- **[LongFred](https://github.com/dcc-bigfred/longfred)** — wireless throttle firmware (`no_std`). Encodes and decodes Z21 / WiThrottle on the device; the firmware owns sockets.
+- **[BigFred Wizard](https://github.com/dcc-bigfred/bigfred-wizard)** — event-tablet helper. Talks Z21 LAN when programming handsets on the layout.
+- **[BigFred](https://github.com/dcc-bigfred/bigfred)** — layout hub (Go). Connected clients live in [`commandstation`](https://pkg.go.dev/github.com/dcc-bigfred/proto/go/pkgs/commandstation).
 
 ## License
 

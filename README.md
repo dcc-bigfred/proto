@@ -1,8 +1,14 @@
 # dcc-bigfred/proto
 
+<p align="center">
+  <img src="docs/logo.png" alt="bigfred-proto" width="200">
+</p>
+
+[![Go Reference](https://pkg.go.dev/badge/github.com/dcc-bigfred/proto/go.svg)](https://pkg.go.dev/github.com/dcc-bigfred/proto/go)
+
 Libraries for talking to model-railroad command stations over **LocoNet**, **Z21 LAN**, and **WiThrottle**. Use them when you build throttles, automation, or firmware that must drive locos, toggle functions, program CVs, or switch track power — without re-implementing wire formats.
 
-Go provides connected **clients** and test **servers**. Rust provides **`no_std` protocol** crates for embedded targets (LongFred); the host owns sockets. Both languages share the same [golden test vectors](testdata/).
+Go provides connected **clients** and test **servers** — documented on [pkg.go.dev](https://pkg.go.dev/github.com/dcc-bigfred/proto/go). Rust provides **`no_std` protocol** crates for embedded targets (LongFred); the host owns sockets. Both languages share the same [golden test vectors](testdata/).
 
 ## Features
 
@@ -35,16 +41,37 @@ Go provides connected **clients** and test **servers**. Rust provides **`no_std`
 
 ✅ production-oriented in this repo · 🧪 experimental / stub · — not implemented
 
+## Go packages ([pkg.go.dev](https://pkg.go.dev/github.com/dcc-bigfred/proto/go))
+
+| Package | pkg.go.dev |
+|---------|------------|
+| Module | [github.com/dcc-bigfred/proto/go](https://pkg.go.dev/github.com/dcc-bigfred/proto/go) |
+| `commandstation` | [pkgs/commandstation](https://pkg.go.dev/github.com/dcc-bigfred/proto/go/pkgs/commandstation) |
+| `z21` | [pkgs/z21](https://pkg.go.dev/github.com/dcc-bigfred/proto/go/pkgs/z21) |
+| `withrottle` | [pkgs/withrottle](https://pkg.go.dev/github.com/dcc-bigfred/proto/go/pkgs/withrottle) |
+| `loconet` | [pkgs/loconet](https://pkg.go.dev/github.com/dcc-bigfred/proto/go/pkgs/loconet) |
+| `drive` | [pkgs/drive](https://pkg.go.dev/github.com/dcc-bigfred/proto/go/pkgs/drive) |
+| `telemetry` | [pkgs/telemetry](https://pkg.go.dev/github.com/dcc-bigfred/proto/go/pkgs/telemetry) |
+
 ## Documentation
 
 | Document | Audience |
 |----------|----------|
+| [Go module on pkg.go.dev](https://pkg.go.dev/github.com/dcc-bigfred/proto/go) | API reference for all Go packages |
 | [Go client guide](docs/go/README.md) | Connect, drive, functions, e-stop, track power |
 | [Rust protocol guide](docs/rust/README.md) | `no_std` Z21 / WiThrottle from firmware or `std::net` |
 | [Z21 LAN spec](docs/z21.md) | Wire format reference |
 | [LocoNet spec](docs/loconet.md) | Opcodes and framing |
 | [WiThrottle spec](docs/withrottle.md) | Line protocol reference |
 | [Architecture](ARCHITECTURE.md) | Repo layout, layers, equivalence |
+
+## Consumers
+
+This library exists for the rest of the [dcc-bigfred](https://github.com/dcc-bigfred) stack:
+
+- **[BigFred](https://github.com/dcc-bigfred/bigfred)** — layout hub (Go). Connected `Station` clients over Z21, LocoNet, and WiThrottle ([commandstation](https://pkg.go.dev/github.com/dcc-bigfred/proto/go/pkgs/commandstation)).
+- **[BigFred Wizard](https://github.com/dcc-bigfred/bigfred-wizard)** — event-tablet helper (Rust). Talks Z21 LAN when programming handsets on the layout.
+- **[LongFred](https://github.com/dcc-bigfred/longfred)** — wireless throttle firmware (Rust `no_std`). Encodes and decodes Z21 / WiThrottle on the device; the firmware owns sockets.
 
 ## Quick start
 
@@ -56,8 +83,10 @@ make -C go test
 ```
 
 ```bash
-go get github.com/dcc-bigfred/proto/go/commandstation
+go get github.com/dcc-bigfred/proto/go@v0.1.0
 ```
+
+Reference: [pkg.go.dev/github.com/dcc-bigfred/proto/go](https://pkg.go.dev/github.com/dcc-bigfred/proto/go)
 
 **Rust** — protocol crate only (no sockets):
 
@@ -73,9 +102,26 @@ dcc-bigfred-proto-withrottle = "0.1"
 
 Path dependency: `dcc-bigfred-proto-z21`, `dcc-bigfred-proto-withrottle` under [`rust/`](rust/).
 
-## Releasing (crates.io)
+## Releasing
 
-Bump `[workspace.package] version` in [`rust/Cargo.toml`](rust/Cargo.toml), commit, then tag and push `vX.Y.Z` (e.g. `v0.1.0`). The [release workflow](.github/workflows/release.yml) publishes every crate without `publish = false` and creates a GitHub Release. Set repository secret `CARGO_REGISTRY_TOKEN`.
+Rust (crates.io) and Go (pkg.go.dev) use **different git tags**. Versions can match (`0.1.0`) but the tag names do not.
+
+| Target | Git tag | How it is published |
+|--------|---------|---------------------|
+| [pkg.go.dev/github.com/dcc-bigfred/proto/go](https://pkg.go.dev/github.com/dcc-bigfred/proto/go) | `go/vX.Y.Z` | Push the tag; [go-release.yml](.github/workflows/go-release.yml) tests and pings `proxy.golang.org`. Then `go get github.com/dcc-bigfred/proto/go@vX.Y.Z`. |
+| crates.io | `vX.Y.Z` | Bump `[workspace.package] version` in [`rust/Cargo.toml`](rust/Cargo.toml), commit, tag and push. [release.yml](.github/workflows/release.yml) publishes every crate without `publish = false` and creates a GitHub Release. Set repository secret `CARGO_REGISTRY_TOKEN`. |
+
+Example: first public cut.
+
+```bash
+git tag go/v0.1.0
+git push origin go/v0.1.0
+# crates.io (after bumping rust/Cargo.toml):
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+The Go module lives in subdirectory `go/`, so the git tag must be prefixed (`go/v0.1.0`) while `go get` still uses `@v0.1.0`. Until the first `go/v*` tag is fetched by the proxy, pkg.go.dev returns 404. Versions `v0.x` show a “not yet at v1” notice.
 
 ## License
 

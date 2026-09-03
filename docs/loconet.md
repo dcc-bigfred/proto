@@ -1,7 +1,7 @@
 # LocoNet Protocol Specification
 
 > Technical reference for the **LocoNet®** bus.
-> Implementation: [`go/commandstation`](../go/commandstation).
+> Implementation: [`go/pkgs/commandstation`](../go/pkgs/commandstation).
 >
 > Sources:
 > - **Digitrax LocoNet Personal Use Edition 1.0** (Digitrax Inc., 16 Oct 1997) —
@@ -244,7 +244,7 @@ Every LocoNet message is **multi-byte**:
 `D3 = 1` implies a follow-on message/reply is expected. The `A,B,C,D,F` bits encode
 up to 32 opcodes per length class.
 
-> **BigFred parser:** [`loconet_proto.go`](../go/commandstation/loconet_proto.go)
+> **BigFred parser:** [`loconet_proto.go`](../go/pkgs/commandstation/loconet_proto.go)
 > `lnMsgLen()` decodes `(opcode >> 5) & 0x03` to `{2,4,6,variable}`, and
 > `lnStreamParser.PushByte()` reconstructs frames from the serial byte stream,
 > resyncing on the next byte with `D7 = 1`.
@@ -265,7 +265,7 @@ valid?   : (b0 XOR b1 XOR … XOR b[n-1] XOR chk) == 0xFF
 ```
 
 BigFred implementation
-([`loconet_proto.go`](../go/commandstation/loconet_proto.go)):
+([`loconet_proto.go`](../go/pkgs/commandstation/loconet_proto.go)):
 
 ```go
 func lnChecksumOK(pkt []byte) bool {
@@ -375,7 +375,7 @@ pointer to the consist-top slot).
 ```
 
 BigFred parses this in
-[`parseLnSlotData()`](../go/commandstation/loconet_proto.go):
+[`parseLnSlotData()`](../go/pkgs/commandstation/loconet_proto.go):
 `addr = (adrLo & 0x7F) | ((adrHi & 0x7F) << 7)`, reading `Speed=pkt[5]`,
 `DirF=pkt[6]`, `Snd=pkt[10]`.
 
@@ -505,9 +505,9 @@ Once a slot is allocated (§13), real-time control uses three 4-byte messages ke
 These do **not** elicit a response. Because they are slot-keyed, an observer must map
 slot → address (via a prior slot read) to attribute the change — BigFred keeps a
 reverse `slotAddr` map for exactly this
-([`loconet.go`](../go/commandstation/loconet.go) `slotToAddr`).
+([`loconet.go`](../go/pkgs/commandstation/loconet.go) `slotToAddr`).
 
-> **BigFred builders** ([`loconet_proto.go`](../go/commandstation/loconet_proto.go)):
+> **BigFred builders** ([`loconet_proto.go`](../go/pkgs/commandstation/loconet_proto.go)):
 > `lnBuildSetSpeed`, `lnBuildSetDirF`, `lnBuildSetSnd` each append the checksum.
 > Direction is folded into the DIRF byte (`0x20`), so `SetSpeed` sends **both** an
 > `A0` speed and an `A1` DIRF message to preserve function bits.
@@ -516,7 +516,7 @@ reverse `slotAddr` map for exactly this
 
 LocoNet slot speed is a 7-bit value (`0x00` stop, `0x01` e-stop, `0x02…0x7F`). BigFred
 maps user steps (14/28/128) into `2…127` linearly in
-[`scaleToLnSpeed()`](../go/commandstation/loconet_proto.go); the decoder
+[`scaleToLnSpeed()`](../go/pkgs/commandstation/loconet_proto.go); the decoder
 type in `STAT1.D2–D0` (§9.1) selects the DCC packet mode the master emits.
 
 ---
@@ -834,7 +834,7 @@ E7 0E 7C <PCMD> <PSTAT> <HOPSA> <LOPSA> <TRK> <CVH> <CVL> <DATA7> <00> <00> <CHK
 
 > **BigFred:** `ReadCV` / `WriteCV` are implemented for the **programming track**
 > (`ProgrammingTrackMode`) using service-mode **direct byte** access
-> ([`loconet.go`](../go/commandstation/loconet.go) `readCVLocked` /
+> ([`loconet.go`](../go/pkgs/commandstation/loconet.go) `readCVLocked` /
 > `writeCVLocked`; builders `lnBuildProgTask` / `parseLnProgReply` with `PCMD` `0x2B`
 > read, `0x6B` write — the values observed from real command stations). The driver
 > sends the `0xEF` slot-`0x7C` task, then resolves the **LACK** and the final `0xE7`
@@ -999,7 +999,7 @@ BigFred's **`loconet_tcp`** kind supports two TCP wire formats. The **default**
 [LoconetOverTcp](https://loconetovertcp.sourceforge.net/Protocol/LoconetOverTcp.html)
 protocol described in this section — spoken by `LbServer`-style gateways and the Digikeijs
 DR5000 LBServer LAN mode — is the
-[`lnTCPASCIITransport`](../go/commandstation/loconet_tcp_ascii.go) driver, selected with
+[`lnTCPASCIITransport`](../go/pkgs/commandstation/loconet_tcp_ascii.go) driver, selected with
 the `lbserver://` scheme.
 
 ### 20.1 Line syntax
@@ -1053,7 +1053,7 @@ ASCII transport at such a peer connects fine but every request times out, becaus
 `RECEIVE` line ever arrives.
 
 BigFred handles this with a second transport,
-[`lnTCPBinaryTransport`](../go/commandstation/loconet_tcp_binary.go)
+[`lnTCPBinaryTransport`](../go/pkgs/commandstation/loconet_tcp_binary.go)
 (`NewLocoNetTCPBinary`): it `Write`s the raw message bytes and reassembles inbound frames
 with the same `lnStreamParser` (§5) the serial transport uses. Raw binary is the **default**
 and the more common case, so it is selected by the bare `tcp://host:port` scheme; the ASCII
@@ -1157,7 +1157,7 @@ neutral "every device sees every packet" model maps to a publish/subscribe netwo
 ## 23 BigFred mapping
 
 How this spec maps to BigFred's drivers
-([`pkgs/loco/commandstation/`](../go/commandstation/)):
+([`pkgs/loco/commandstation/`](../go/pkgs/commandstation/)):
 
 ### 23.1 Transports
 

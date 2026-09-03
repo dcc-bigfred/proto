@@ -1,0 +1,41 @@
+name: Go module
+
+on:
+  push:
+    tags:
+      - "go/v*"
+
+permissions:
+  contents: read
+
+env:
+  GO_VERSION: "1.25.0"
+
+jobs:
+  pkg-go-dev:
+    name: pkg.go.dev
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: go
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: go/go.sum
+
+      - name: Test
+        run: make test
+
+      - name: Ping module proxy
+        working-directory: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#go/}"
+          echo "Fetching github.com/dcc-bigfred/proto/go@${VERSION}"
+          GOPROXY=proxy.golang.org go list -m "github.com/dcc-bigfred/proto/go@${VERSION}"
+          echo "https://pkg.go.dev/github.com/dcc-bigfred/proto/go@${VERSION}"

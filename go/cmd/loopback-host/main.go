@@ -7,9 +7,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dcc-bigfred/proto/go/drive"
-	"github.com/dcc-bigfred/proto/go/withrottle"
-	"github.com/dcc-bigfred/proto/go/z21"
+	"github.com/dcc-bigfred/proto/go/pkgs/drive"
+	"github.com/dcc-bigfred/proto/go/pkgs/withrottle"
+	"github.com/dcc-bigfred/proto/go/pkgs/z21"
 )
 
 func main() {

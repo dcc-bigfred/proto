@@ -1,11 +1,11 @@
 # Go library — `commandstation`
 
-The [`github.com/dcc-bigfred/proto/go/commandstation`](../../go/commandstation) package provides a shared interface for driving locomotives over Z21, LocoNet, and WiThrottle. Below are minimal examples for connecting, driving, auxiliary functions, and emergency stop.
+The [`github.com/dcc-bigfred/proto/go/pkgs/commandstation`](../../go/pkgs/commandstation) package provides a shared interface for driving locomotives over Z21, LocoNet, and WiThrottle. Below are minimal examples for connecting, driving, auxiliary functions, and emergency stop.
 
 ## Installation
 
 ```bash
-go get github.com/dcc-bigfred/proto/go/commandstation
+go get github.com/dcc-bigfred/proto/go@v0.1.0
 ```
 
 Requires Go ≥ 1.25.
@@ -42,7 +42,7 @@ package main
 import (
 	"log"
 
-	"github.com/dcc-bigfred/proto/go/commandstation"
+	"github.com/dcc-bigfred/proto/go/pkgs/commandstation"
 )
 
 func main() {
@@ -74,7 +74,7 @@ defer st.CleanUp()
 You can optionally set the client identity:
 
 ```go
-import "github.com/dcc-bigfred/proto/go/withrottle"
+import "github.com/dcc-bigfred/proto/go/pkgs/withrottle"
 
 st, err := commandstation.NewWiThrottle("192.168.0.42", 12090,
 	withrottle.WithName("my-app"),
@@ -112,7 +112,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/dcc-bigfred/proto/go/commandstation"
+	"github.com/dcc-bigfred/proto/go/pkgs/commandstation"
 )
 
 func scan(subnet string) {
@@ -242,7 +242,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/dcc-bigfred/proto/go/commandstation"
+	"github.com/dcc-bigfred/proto/go/pkgs/commandstation"
 )
 
 func main() {
@@ -298,7 +298,7 @@ On older Z21 firmware, also call `SubscribeLocoInfo(addr)` (`LocoInfoSubscriber`
 
 ## Tests and further reading
 
-- Integration tests in `go/commandstation/*_test.go` and `go/z21/roundtrip_test.go`
+- Integration tests in `go/pkgs/commandstation/*_test.go` and `go/pkgs/z21/roundtrip_test.go`
 - Protocol specifications: [`docs/z21.md`](../z21.md), [`docs/loconet.md`](../loconet.md), [`docs/withrottle.md`](../withrottle.md)
 - Rust protocols (no sockets): [`docs/rust/README.md`](../rust/README.md)
 - Run tests: `make -C go test` or `make test-go` from the repository root

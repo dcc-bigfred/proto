@@ -10,7 +10,7 @@ homepage.workspace = true
 readme = "README.md"
 keywords = ["dcc", "withrottle", "model-railroad", "no-std"]
 categories = ["embedded", "encoding"]
-include = ["src/**", "Cargo.toml", "README.md", "LICENSE"]
+include = ["src/**", "Cargo.toml", "README.md", "LICENSE", "logo.png"]
 
 [lints]
 workspace = true
