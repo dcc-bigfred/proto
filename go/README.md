@@ -20,7 +20,7 @@ go get github.com/dcc-bigfred/proto/go@v0.1.0
 
 | Import | Role |
 |--------|------|
-| [`pkgs/commandstation`](https://pkg.go.dev/github.com/dcc-bigfred/proto/go/pkgs/commandstation) | `Station` clients: `NewZ21Roco`, `NewWiThrottle`, `NewLocoNetSerial`, `NewLocoNetTCP`, `NewLocoNetTCPBinary` |
+| [`pkgs/commandstation`](https://pkg.go.dev/github.com/dcc-bigfred/proto/go/pkgs/commandstation) | `Station` clients: recommended `Open(uri)`; also `NewZ21Roco`, `NewWiThrottle`, `NewLocoNetSerial`, `NewLocoNetTCP`, `NewLocoNetTCPBinary` |
 | [`pkgs/z21`](https://pkg.go.dev/github.com/dcc-bigfred/proto/go/pkgs/z21) | Z21 LAN frames + UDP `Listen` server |
 | [`pkgs/withrottle`](https://pkg.go.dev/github.com/dcc-bigfred/proto/go/pkgs/withrottle) | WiThrottle lines + TCP client + `Listen` server |
 | [`pkgs/loconet`](https://pkg.go.dev/github.com/dcc-bigfred/proto/go/pkgs/loconet) | LocoNet framing + TCP gateway |
@@ -39,7 +39,7 @@ import (
 )
 
 func main() {
-	st, err := commandstation.NewZ21Roco("192.168.0.111", 21105)
+	st, err := commandstation.Open("z21://192.168.0.111:21105")
 	if err != nil {
 		log.Fatal(err)
 	}

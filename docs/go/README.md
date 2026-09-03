@@ -1,6 +1,6 @@
 # Go library — `commandstation`
 
-The [`github.com/dcc-bigfred/proto/go/pkgs/commandstation`](../../go/pkgs/commandstation) package provides a shared interface for driving locomotives over Z21, LocoNet, and WiThrottle. Below are minimal examples for connecting, driving, auxiliary functions, and emergency stop.
+The [`github.com/dcc-bigfred/proto/go/pkgs/commandstation`](../../go/pkgs/commandstation) package provides a shared interface for driving locomotives over Z21, LocoNet, and WiThrottle. Connect with `Open(uri)`, then drive, toggle functions, and emergency-stop.
 
 ## Installation
 
@@ -32,9 +32,7 @@ Optional capabilities (type-assert after connecting):
 
 ## Connecting to a command station
 
-Pick the constructor that matches your hardware. Always close with `CleanUp()` (e.g. via `defer`).
-
-### Z21 (UDP, port 21105)
+The recommended constructor is `Open(uri)`. The URI scheme selects the driver. Always close with `CleanUp()` (e.g. via `defer`).
 
 ```go
 package main
@@ -46,7 +44,7 @@ import (
 )
 
 func main() {
-	st, err := commandstation.NewZ21Roco("192.168.0.111", 21105)
+	st, err := commandstation.Open("z21://192.168.0.111:21105")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -56,55 +54,30 @@ func main() {
 }
 ```
 
-### WiThrottle (TCP, default port 12090)
+| URI | Driver | Defaults |
+|-----|--------|----------|
+| `z21://host:port` | Z21 LAN | port `21105`; alias `udp://` |
+| `withrottle://host:port` | WiThrottle TCP | port `12090` |
+| `serial://device:baud` | LocoNet serial | baud `57600`; `serial://autodetect:57600` picks the first USB adapter |
+| `loconet-tcp://host:port` | LocoNet TCP binary (RocRail `lbtcp`) | port `1234`; alias `tcp://` |
+| `lbserver://host:port` | LocoNet TCP ASCII (LbServer) | port `5550` |
 
-Works with JMRI, DCC-EX, LNWI, RB1110, and similar servers.
-
-```go
-st, err := commandstation.NewWiThrottle("192.168.0.42", 12090)
-if err != nil {
-	log.Fatal(err)
-}
-defer st.CleanUp()
-
-// Port 0 uses the default 12090:
-// st, err := commandstation.NewWiThrottle("192.168.0.42", 0)
-```
-
-You can optionally set the client identity:
+Port or baud may be omitted (`z21://192.168.0.111`). `withrottle://` accepts the same identity options as `NewWiThrottle`:
 
 ```go
 import "github.com/dcc-bigfred/proto/go/pkgs/withrottle"
 
-st, err := commandstation.NewWiThrottle("192.168.0.42", 12090,
+st, err := commandstation.Open("withrottle://192.168.0.42:12090",
 	withrottle.WithName("my-app"),
 	withrottle.WithDeviceID("app-01"),
 )
 ```
 
-### LocoNet
-
-**Serial port** (e.g. Uhlenbrock 63120, PR3):
-
-```go
-st, err := commandstation.NewLocoNetSerial("/dev/ttyUSB0", 57600)
-```
-
-**TCP — LbServer (ASCII)**, typical port 5550:
-
-```go
-st, err := commandstation.NewLocoNetTCP("192.168.0.10", 5550)
-```
-
-**TCP — raw LocoNet frames** (RocRail `lbtcp`), port 1234:
-
-```go
-st, err := commandstation.NewLocoNetTCPBinary("192.168.0.10", 1234)
-```
+Typed constructors (`NewZ21Roco`, `NewWiThrottle`, `NewLocoNetSerial`, `NewLocoNetTCP`, `NewLocoNetTCPBinary`) remain when you already know the transport.
 
 ### LAN autodetection
 
-Scanners return candidate connections with URIs (`udp://…`, `withrottle://…`, `lbserver://…`, `tcp://…`):
+Scanners return candidate connections with URIs. Pass a hit straight to `Open`:
 
 ```go
 import (
@@ -130,9 +103,10 @@ func scan(subnet string) {
 		return nil
 	})
 }
-```
 
-After picking a URI, open the matching constructor manually (e.g. `udp://192.168.0.111:21105` → `NewZ21Roco("192.168.0.111", 21105)`).
+// After picking a URI from the scan:
+// st, err := commandstation.Open("z21://192.168.0.111:21105")
+```
 
 ## Driving — `SetSpeed` / `GetSpeed`
 
@@ -246,7 +220,7 @@ import (
 )
 
 func main() {
-	st, err := commandstation.NewZ21Roco("192.168.0.111", 21105)
+	st, err := commandstation.Open("z21://192.168.0.111:21105")
 	if err != nil {
 		log.Fatal(err)
 	}

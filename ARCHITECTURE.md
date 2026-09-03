@@ -68,13 +68,16 @@ Same surface as bigfred `pkgs/loco/commandstation`:
 
 `SetSpeed`, `GetSpeed`, `SendFn`, `ListFunctions`, `ReadCV`, `WriteCV`,
 `CleanUp`, plus optional `SlotManager`, `TrackPowerController`, `MetricsSource`.
-Constructors: `NewZ21Roco`, `NewLocoNetSerial`, `NewLocoNetTCP`,
-`NewLocoNetTCPBinary`, `NewWiThrottle`.
+Recommended constructor: `Open(uri)` — scheme selects the driver
+(`z21://`, `withrottle://`, `serial://`, `loconet-tcp://`, `lbserver://`;
+aliases `udp://` and `tcp://` are also accepted).
+Typed constructors (`NewZ21Roco`, `NewLocoNetSerial`, `NewLocoNetTCP`,
+`NewLocoNetTCPBinary`, `NewWiThrottle`) remain for when the transport is known.
 
 `NewWiThrottle(host, port, opts …)` implements `Station` (JMRI / DCC-EX /
 LNWI / RB1110). CV ops return `ErrUnsupported`. Device id defaults to
 `proto-<8 hex>`. Scan the LAN with `WiThrottleAutodetection` (TCP 12090,
-URI `withrottle://host:port`).
+URI `withrottle://host:port`), then `Open(c.URI)`.
 
 ## Go server (`DriveHost`)
 

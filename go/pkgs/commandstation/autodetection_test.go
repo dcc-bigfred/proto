@@ -91,7 +91,7 @@ func TestLocoNetTCPAutodetection(t *testing.T) {
 	for _, c := range got {
 		uris[c.URI] = true
 	}
-	if !uris["tcp://192.168.0.10:1234"] || !uris["lbserver://192.168.0.20:5550"] {
+	if !uris["loconet-tcp://192.168.0.10:1234"] || !uris["lbserver://192.168.0.20:5550"] {
 		t.Fatalf("unexpected URIs: %+v", got)
 	}
 }
@@ -140,7 +140,7 @@ func TestZ21AutodetectionPreferredHost(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Scan: %v", err)
 	}
-	if len(got) != 1 || got[0].URI != "udp://10.0.0.111:21105" {
+	if len(got) != 1 || got[0].URI != "z21://10.0.0.111:21105" {
 		t.Fatalf("got %+v", got)
 	}
 	if len(probed) != 1 {
@@ -164,7 +164,7 @@ func TestZ21AutodetectionFullScan(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Scan: %v", err)
 	}
-	if len(got) != 1 || got[0].URI != "udp://10.0.0.42:21105" {
+	if len(got) != 1 || got[0].URI != "z21://10.0.0.42:21105" {
 		t.Fatalf("got %+v", got)
 	}
 }

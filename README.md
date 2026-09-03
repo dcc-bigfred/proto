@@ -12,7 +12,7 @@ Go provides connected **clients** and test **servers** — documented on [pkg.go
 
 ## Features
 
-- **Unified drive API (Go)** — `SetSpeed`, `GetSpeed`, `SendFn`, `ListFunctions`, `EmergencyStop`, CV read/write, optional track power and LocoNet slot management
+- **Unified drive API (Go)** — `Open(uri)` then `SetSpeed`, `GetSpeed`, `SendFn`, `ListFunctions`, `EmergencyStop`, CV read/write, optional track power and LocoNet slot management
 - **Three transports** — Z21 (UDP), LocoNet (serial / TCP), WiThrottle (TCP)
 - **LAN autodetection (Go)** — scan a /24 for Z21, WiThrottle, and LocoNet-over-TCP
 - **Protocol libraries** — frame encode/decode, checksums, WiThrottle line grammar; Rust crates are `no_std`, no `alloc`
@@ -27,13 +27,13 @@ Go provides connected **clients** and test **servers** — documented on [pkg.go
 | Area | Go | Rust | Notes |
 |------|:--:|:--:|-------|
 | Z21 protocol | ✅ | ✅ | LAN frames, drive, functions, track power |
-| Z21 `Station` client | ✅ | — | `NewZ21Roco` |
+| Z21 `Station` client | ✅ | — | `Open("z21://…")` / `NewZ21Roco` |
 | Z21 server (`Listen`) | ✅ | 🧪 | Rust crate is experimental |
 | WiThrottle protocol | ✅ | ✅ | Handshake, acquire, drive, fn, e-stop, track power |
-| WiThrottle `Station` client | ✅ | — | JMRI, DCC-EX, LNWI, RB1110 |
+| WiThrottle `Station` client | ✅ | — | `Open("withrottle://…")` / JMRI, DCC-EX, LNWI, RB1110 |
 | WiThrottle server | ✅ | 🧪 | Rust crate is experimental |
 | LocoNet framing + gateway | ✅ | 🧪 | Rust gateway is a stub |
-| LocoNet `Station` client | ✅ | — | Serial, LbServer ASCII, binary TCP |
+| LocoNet `Station` client | ✅ | — | `Open("serial://…" / "loconet-tcp://…" / "lbserver://…")` |
 | LocoNet slot lifecycle | ✅ | — | Acquire, release, dispatch, steal |
 | CV programming | ✅ | — | Z21 + LocoNet; WiThrottle returns unsupported |
 | Golden test vectors | ✅ | ✅ | Generated from Go |

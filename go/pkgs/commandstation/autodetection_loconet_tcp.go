@@ -42,7 +42,7 @@ func (a LocoNetTCPAutodetection) Scan(ctx context.Context, emit EmitFunc) error 
 		case locoNetTCPBinaryPort:
 			c = DetectedConnection{
 				Name: fmt.Sprintf("LocoNet TCP Binary %s:%d", host, port),
-				URI:  fmt.Sprintf("tcp://%s:%d", host, port),
+				URI:  fmt.Sprintf("loconet-tcp://%s:%d", host, port),
 			}
 		case locoNetTCPASCIIPort:
 			c = DetectedConnection{

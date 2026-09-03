@@ -46,7 +46,7 @@ func (a Z21Autodetection) Scan(ctx context.Context, emit EmitFunc) error {
 	if err := probe(ctx, fmt.Sprintf("%s:%d", preferred, z21DefaultPort), z21SerialNumberProbe); err == nil {
 		return emit(DetectedConnection{
 			Name: fmt.Sprintf("Z21 %s:%d", preferred, z21DefaultPort),
-			URI:  fmt.Sprintf("udp://%s:%d", preferred, z21DefaultPort),
+			URI:  fmt.Sprintf("z21://%s:%d", preferred, z21DefaultPort),
 		})
 	}
 
@@ -67,7 +67,7 @@ func (a Z21Autodetection) Scan(ctx context.Context, emit EmitFunc) error {
 				}
 				_ = emit(DetectedConnection{
 					Name: fmt.Sprintf("Z21 %s:%d", host, z21DefaultPort),
-					URI:  fmt.Sprintf("udp://%s:%d", host, z21DefaultPort),
+					URI:  fmt.Sprintf("z21://%s:%d", host, z21DefaultPort),
 				})
 			}
 		}()

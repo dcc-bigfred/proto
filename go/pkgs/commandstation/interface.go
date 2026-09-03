@@ -1,10 +1,12 @@
 // Package commandstation provides a shared Station interface for driving
 // locomotives over Z21 LAN, LocoNet, and WiThrottle.
 //
-// Construct a driver with NewZ21Roco, NewWiThrottle, NewLocoNetSerial,
-// NewLocoNetTCP, or NewLocoNetTCPBinary, then call SetSpeed, SendFn,
-// EmergencyStop, and CleanUp. Optional capabilities (track power, slot
-// lifecycle, bus observation) are type-asserted after connect.
+// The recommended way to connect is Open with a connection URI (z21://,
+// withrottle://, serial://, loconet-tcp://, lbserver://). Typed constructors
+// (NewZ21Roco, NewWiThrottle, NewLocoNetSerial, NewLocoNetTCP,
+// NewLocoNetTCPBinary) remain available when the transport is already known.
+// After connect, call SetSpeed, SendFn, EmergencyStop, and CleanUp. Optional
+// capabilities (track power, slot lifecycle, bus observation) are type-asserted.
 package commandstation
 
 import (
