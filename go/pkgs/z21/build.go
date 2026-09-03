@@ -140,6 +140,29 @@ func BuildProgWrite(cvWire uint16, value byte) []byte {
 	return xbus([]byte{0x24, 0x12, byte(cvWire >> 8), byte(cvWire & 0xFF), value})
 }
 
+// BuildCvResult is LAN_X_CV_RESULT (§6.5). cv is 1-based (NMRA).
+func BuildCvResult(cv uint16, value byte) []byte {
+	w := cvWire(cv)
+	return xbus([]byte{0x64, 0x14, byte(w >> 8), byte(w & 0xFF), value})
+}
+
+// BuildCvNack is LAN_X_CV_NACK (§6.4).
+func BuildCvNack() []byte {
+	return xbus([]byte{0x61, 0x13})
+}
+
+// BuildCvNackSC is LAN_X_CV_NACK_SC (§6.3).
+func BuildCvNackSC() []byte {
+	return xbus([]byte{0x61, 0x12})
+}
+
+func cvWire(cv uint16) uint16 {
+	if cv == 0 {
+		return 0
+	}
+	return cv - 1
+}
+
 const (
 	hwTypeZ21Black uint32 = 0x00000201
 	firmwareBCD    uint32 = 0x00000124

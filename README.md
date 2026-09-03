@@ -26,7 +26,7 @@ Go provides connected **clients** and test **servers** — documented on [pkg.go
 
 | Area | Go | Rust | Notes |
 |------|:--:|:--:|-------|
-| Z21 protocol | ✅ | ✅ | LAN frames, drive, functions, track power |
+| Z21 protocol | ✅ | ✅ | LAN frames, drive, functions, track power, CV/POM |
 | Z21 `Station` client | ✅ | — | `Open("z21://…")` / `NewZ21Roco` |
 | Z21 server (`Listen`) | ✅ | 🧪 | Rust crate is experimental |
 | WiThrottle protocol | ✅ | ✅ | Handshake, acquire, drive, fn, e-stop, track power |
@@ -35,7 +35,7 @@ Go provides connected **clients** and test **servers** — documented on [pkg.go
 | LocoNet framing + gateway | ✅ | 🧪 | Rust gateway is a stub |
 | LocoNet `Station` client | ✅ | — | `Open("serial://…" / "loconet-tcp://…" / "lbserver://…")` |
 | LocoNet slot lifecycle | ✅ | — | Acquire, release, dispatch, steal |
-| CV programming | ✅ | — | Z21 + LocoNet; WiThrottle returns unsupported |
+| CV programming | ✅ | ✅ | Go: `Station` ReadCV/WriteCV (Z21+LocoNet); Rust: Z21 encode/decode + address helpers |
 | Golden test vectors | ✅ | ✅ | Generated from Go |
 | Usage guides | ✅ | ✅ | See [docs/](docs/) below |
 

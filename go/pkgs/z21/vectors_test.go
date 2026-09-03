@@ -97,3 +97,94 @@ func TestGoldenFunctionGroup(t *testing.T) {
 		}
 	}
 }
+
+func TestGoldenCV(t *testing.T) {
+	f, err := vectors.Load(testdata(t, "z21/cv.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range f.Cases {
+		want, err := hex.DecodeString(c.Hex)
+		if err != nil {
+			t.Fatalf("%s: %v", c.ID, err)
+		}
+		var got []byte
+		switch c.ID {
+		case "cv_read_1":
+			got = BuildProgRead(0)
+		case "cv_write_8_0x20":
+			got = BuildProgWrite(7, 0x20)
+		case "pom_read_128_cv1":
+			got = BuildPomRead(128, 0)
+		case "cv_result_8_0x20":
+			got = BuildCvResult(8, 0x20)
+		case "cv_nack":
+			got = BuildCvNack()
+		case "cv_nack_sc":
+			got = BuildCvNackSC()
+		default:
+			t.Fatalf("unknown case %s", c.ID)
+		}
+		if hex.EncodeToString(got) != c.Hex {
+			t.Fatalf("%s:\n got % X\nwant % X", c.ID, got, want)
+		}
+		switch c.Op {
+		case "cv_result":
+			r, ok := ParseCvReply(got)
+			if !ok || r.Kind != CvResult || r.CV != 8 || r.Value != 0x20 {
+				t.Fatalf("parse result: %+v ok=%v", r, ok)
+			}
+		case "cv_nack":
+			r, ok := ParseCvReply(got)
+			if !ok || r.Kind != CvNack {
+				t.Fatalf("parse nack: %+v ok=%v", r, ok)
+			}
+		case "cv_nack_sc":
+			r, ok := ParseCvReply(got)
+			if !ok || r.Kind != CvNackSC {
+				t.Fatalf("parse nack_sc: %+v ok=%v", r, ok)
+			}
+		}
+	}
+}
+
+func TestAddressFromCVs(t *testing.T) {
+	addr, long, ok := AddressFromCVs(7, 0, 0, 0x06)
+	if !ok || addr != 7 || long {
+		t.Fatalf("short: addr=%d long=%v ok=%v", addr, long, ok)
+	}
+	addr, long, ok = AddressFromCVs(0, 0xC4, 0xD2, 0x26)
+	if !ok || addr != 1234 || !long {
+		t.Fatalf("long: addr=%d long=%v ok=%v", addr, long, ok)
+	}
+}
+
+func TestAddressCVWrites(t *testing.T) {
+	writes, long, err := AddressCVWrites(7, 0x26)
+	if err != nil || long || len(writes) != 2 {
+		t.Fatalf("short: %+v long=%v err=%v", writes, long, err)
+	}
+	if writes[0] != (CVWrite{1, 7}) || writes[1] != (CVWrite{29, 0x06}) {
+		t.Fatalf("short writes: %+v", writes)
+	}
+	writes, long, err = AddressCVWrites(1234, 0x06)
+	if err != nil || !long || len(writes) != 3 {
+		t.Fatalf("long: %+v long=%v err=%v", writes, long, err)
+	}
+	if writes[0].CV != 17 || writes[0].Value != 0xC4 || writes[1].Value != 0xD2 || writes[2].Value != 0x26 {
+		t.Fatalf("long writes: %+v", writes)
+	}
+	if _, _, err := AddressCVWrites(0, 0); err != ErrInvalidAddress {
+		t.Fatalf("zero addr: %v", err)
+	}
+}
+
+func TestParseCvReplyConcatenated(t *testing.T) {
+	serial := BuildSerialReply(1)
+	result := BuildCvResult(8, 0x20)
+	buf := append(append([]byte{}, serial...), result...)
+	r, ok := ParseCvReply(buf)
+	if !ok || r.Kind != CvResult || r.CV != 8 || r.Value != 0x20 {
+		t.Fatalf("concatenated: %+v ok=%v", r, ok)
+	}
+}

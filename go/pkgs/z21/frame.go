@@ -1,5 +1,6 @@
 // Package z21 implements the Z21 LAN UDP protocol: frame encode/decode,
-// locomotive drive commands, and a loopback Listen server for tests.
+// locomotive drive commands, CV/POM programming, decoder address helpers,
+// and a loopback Listen server for tests.
 package z21
 
 import "encoding/binary"

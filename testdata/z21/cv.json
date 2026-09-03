@@ -1,0 +1,49 @@
+{
+  "cases": [
+    {
+      "id": "cv_read_1",
+      "hex": "090040002311000032",
+      "op": "cv_read",
+      "fields": {
+        "cv": 1
+      }
+    },
+    {
+      "id": "cv_write_8_0x20",
+      "hex": "0a004000241200072011",
+      "op": "cv_write",
+      "fields": {
+        "cv": 8,
+        "value": 32
+      }
+    },
+    {
+      "id": "pom_read_128_cv1",
+      "hex": "0c004000e630c080e4000072",
+      "op": "pom_read",
+      "fields": {
+        "addr": 128,
+        "cv": 1
+      }
+    },
+    {
+      "id": "cv_result_8_0x20",
+      "hex": "0a004000641400072057",
+      "op": "cv_result",
+      "fields": {
+        "cv": 8,
+        "value": 32
+      }
+    },
+    {
+      "id": "cv_nack",
+      "hex": "07004000611372",
+      "op": "cv_nack"
+    },
+    {
+      "id": "cv_nack_sc",
+      "hex": "07004000611273",
+      "op": "cv_nack_sc"
+    }
+  ]
+}

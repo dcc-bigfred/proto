@@ -65,7 +65,7 @@ fn connect_z21(addr: &str) -> std::io::Result<(UdpSocket, z21::Client)> {
 }
 ```
 
-Inbound serial replies and `LAN_X_LOCO_INFO` arrive as `Event::Serial` / `Event::LocoInfo`:
+Inbound serial replies, `LAN_X_LOCO_INFO`, and CV programming replies arrive as `Event::Serial` / `Event::LocoInfo` / `Event::CvResult` (or `CvNack` / `CvNackSc`):
 
 ```rust
 let mut buf = [0u8; 256];
@@ -75,6 +75,8 @@ cli.on_bytes(&buf[..n], &mut |ev| match ev {
     z21::Event::LocoInfo(info) => {
         println!("loco {} speed {} fwd {}", info.addr, info.speed, info.forward)
     }
+    z21::Event::CvResult { cv, value } => println!("CV{cv} = {value}"),
+    z21::Event::CvNack | z21::Event::CvNackSc => println!("CV programming failed"),
 });
 ```
 
@@ -208,7 +210,27 @@ send(
 )?;
 ```
 
-There is no CV programming in either protocol (no `ReadCV` / `WriteCV` on the wire API).
+## CV programming
+
+There is no CV programming on WiThrottle. Z21 encodes programming-track and PoM commands (`Command::CvRead` / `CvWrite` / `PomRead` / `PomWrite`; CV numbers are 1-based). Replies arrive as `Event::CvResult`, `Event::CvNack`, or `Event::CvNackSc`.
+
+```rust
+cli.encode(&z21::Command::CvRead { cv: 1 }, &mut out)?;
+sock.send(&out)?;
+
+out.clear();
+cli.encode(
+    &z21::Command::PomWrite {
+        addr: 128,
+        cv: 8,
+        value: 0x20,
+    },
+    &mut out,
+)?;
+sock.send(&out)?;
+```
+
+`address_from_cvs` / `address_cv_writes` map CV1 / 17 / 18 / 29 to a DCC locomotive address.
 
 ## Emergency stop
 
@@ -317,7 +339,7 @@ fn main() -> std::io::Result<()> {
 
 - Connected LocoNet client (serial / LbServer / binary TCP) — use Go
 - LAN autodetection
-- Slot manager, state observer channels, CV programming on the wire
+- Slot manager, state observer channels
 - A production Z21/WiThrottle **server** (the `*-server` crates are experimental)
 
 ## Tests and further reading

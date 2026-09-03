@@ -15,11 +15,13 @@ const SERIAL_LEN: usize = 4;
 const BCFLAGS_LEN: usize = 8;
 const _: () = assert!(WIRE_BUF_LEN >= SERIAL_LEN + BCFLAGS_LEN);
 
-/// Encode error.
+/// Encode / address error.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Error {
     /// `WireBuf` has no remaining capacity.
     BufferFull,
+    /// Decoder address 0 is not a valid DCC locomotive address.
+    InvalidAddress,
 }
 
 /// LAN headers (little-endian uint16 at bytes 2–3).
@@ -136,15 +138,18 @@ pub fn decode_drive_from_loco_info(db2: u8, db3: u8) -> (u8, bool) {
 
 fn put_lan(out: &mut WireBuf, header: u16, data: &[u8]) -> Result<(), Error> {
     let len = (4 + data.len()) as u16;
-    out.extend_from_slice(&len.to_le_bytes()).map_err(|_| Error::BufferFull)?;
-    out.extend_from_slice(&header.to_le_bytes()).map_err(|_| Error::BufferFull)?;
+    out.extend_from_slice(&len.to_le_bytes())
+        .map_err(|_| Error::BufferFull)?;
+    out.extend_from_slice(&header.to_le_bytes())
+        .map_err(|_| Error::BufferFull)?;
     out.extend_from_slice(data).map_err(|_| Error::BufferFull)?;
     Ok(())
 }
 
 fn put_xbus(out: &mut WireBuf, payload: &[u8]) -> Result<(), Error> {
     let mut tmp: Vec<u8, 32> = Vec::new();
-    tmp.extend_from_slice(payload).map_err(|_| Error::BufferFull)?;
+    tmp.extend_from_slice(payload)
+        .map_err(|_| Error::BufferFull)?;
     tmp.push(xor_sum(payload)).map_err(|_| Error::BufferFull)?;
     put_lan(out, HEADER_XBUS, &tmp)
 }
@@ -202,6 +207,110 @@ pub fn encode_get_loco_info(out: &mut WireBuf, addr: u16) -> Result<(), Error> {
 pub fn encode_track_power(out: &mut WireBuf, on: bool) -> Result<(), Error> {
     let db0 = if on { 0x81 } else { 0x80 };
     put_xbus(out, &[0x21, db0])
+}
+
+/// NMRA CV number (1-based) to the Z21 wire value (`0` = CV1).
+#[must_use]
+pub fn cv_wire(cv: u16) -> u16 {
+    cv.saturating_sub(1)
+}
+
+/// LAN_X_CV_READ (§6.1) — programming track, direct mode. `cv` is 1-based.
+pub fn encode_cv_read(out: &mut WireBuf, cv: u16) -> Result<(), Error> {
+    let w = cv_wire(cv);
+    put_xbus(out, &[0x23, 0x11, (w >> 8) as u8, (w & 0xFF) as u8])
+}
+
+/// LAN_X_CV_WRITE (§6.2). `cv` is 1-based.
+pub fn encode_cv_write(out: &mut WireBuf, cv: u16, value: u8) -> Result<(), Error> {
+    let w = cv_wire(cv);
+    put_xbus(out, &[0x24, 0x12, (w >> 8) as u8, (w & 0xFF) as u8, value])
+}
+
+/// LAN_X_CV_POM_READ_BYTE (§6.8). `cv` is 1-based.
+pub fn encode_pom_read(out: &mut WireBuf, addr: u16, cv: u16) -> Result<(), Error> {
+    let w = cv_wire(cv);
+    let (msb, lsb) = addr_bytes(addr);
+    let db3 = 0xE4 | ((w >> 8) & 0x03) as u8;
+    put_xbus(out, &[0xE6, 0x30, msb, lsb, db3, (w & 0xFF) as u8, 0x00])
+}
+
+/// LAN_X_CV_POM_WRITE_BYTE (§6.6). `cv` is 1-based. No Z21 reply.
+pub fn encode_pom_write(out: &mut WireBuf, addr: u16, cv: u16, value: u8) -> Result<(), Error> {
+    let w = cv_wire(cv);
+    let (msb, lsb) = addr_bytes(addr);
+    let db3 = 0xEC | ((w >> 8) & 0x03) as u8;
+    put_xbus(out, &[0xE6, 0x30, msb, lsb, db3, (w & 0xFF) as u8, value])
+}
+
+/// Walk concatenated Z21 records and return the first CV programming reply.
+#[must_use]
+pub fn parse_cv_reply(buf: &[u8]) -> Option<Event> {
+    let mut pkts: Vec<&[u8], 8> = Vec::new();
+    split_datagram(buf, &mut pkts);
+    for pkt in pkts {
+        if let Some(ev) = parse_cv_record(pkt) {
+            return Some(ev);
+        }
+    }
+    None
+}
+
+fn parse_cv_record(pkt: &[u8]) -> Option<Event> {
+    if pkt.len() < 6 || !valid_frame(pkt) {
+        return None;
+    }
+    let header = u16::from_le_bytes([pkt[2], pkt[3]]);
+    if header != HEADER_XBUS {
+        return None;
+    }
+    let d = &pkt[4..];
+    if d.len() >= 6 && d[0] == 0x64 && d[1] == 0x14 {
+        let wire = (u16::from(d[2]) << 8) | u16::from(d[3]);
+        return Some(Event::CvResult {
+            cv: wire.saturating_add(1),
+            value: d[4],
+        });
+    }
+    if d.len() >= 2 && d[0] == 0x61 && d[1] == 0x13 {
+        return Some(Event::CvNack);
+    }
+    if d.len() >= 2 && d[0] == 0x61 && d[1] == 0x12 {
+        return Some(Event::CvNackSc);
+    }
+    None
+}
+
+/// Decode a DCC locomotive address from CV1, CV17, CV18, and CV29.
+///
+/// The `bool` is `true` when CV29 bit 5 (`0x20`) selects the long address.
+#[must_use]
+pub fn address_from_cvs(cv1: u8, cv17: u8, cv18: u8, cv29: u8) -> Option<(u16, bool)> {
+    if cv29 & 0x20 != 0 {
+        let addr = (u16::from(cv17 & 0x3F) << 8) | u16::from(cv18);
+        Some((addr, true))
+    } else {
+        Some((u16::from(cv1), false))
+    }
+}
+
+/// CV writes that program `addr` into the decoder (CV1 or CV17/18, plus CV29 bit 5).
+///
+/// Short address: CV1 + clear `0x20` in CV29. Long address: CV17 (`| 0xC0`), CV18, set `0x20`.
+pub fn address_cv_writes(addr: u16, cv29: u8) -> Result<Vec<(u16, u8), 3>, Error> {
+    if addr == 0 {
+        return Err(Error::InvalidAddress);
+    }
+    let mut out = Vec::new();
+    if addr <= 127 {
+        let _ = out.push((1, addr as u8));
+        let _ = out.push((29, cv29 & !0x20));
+    } else {
+        let _ = out.push((17, ((addr >> 8) as u8) | 0xC0));
+        let _ = out.push((18, addr as u8));
+        let _ = out.push((29, cv29 | 0x20));
+    }
+    Ok(out)
 }
 
 fn encode_function_bytes(mask: u32) -> [u8; 5] {
@@ -397,6 +506,26 @@ pub enum Command {
     TrackPower {
         on: bool,
     },
+    /// LAN_X_CV_READ. `cv` is 1-based (NMRA).
+    CvRead {
+        cv: u16,
+    },
+    /// LAN_X_CV_WRITE. `cv` is 1-based (NMRA).
+    CvWrite {
+        cv: u16,
+        value: u8,
+    },
+    /// LAN_X_CV_POM_READ_BYTE. `cv` is 1-based (NMRA).
+    PomRead {
+        addr: u16,
+        cv: u16,
+    },
+    /// LAN_X_CV_POM_WRITE_BYTE. `cv` is 1-based (NMRA).
+    PomWrite {
+        addr: u16,
+        cv: u16,
+        value: u8,
+    },
 }
 
 /// Event decoded from incoming datagrams.
@@ -404,6 +533,15 @@ pub enum Command {
 pub enum Event {
     LocoInfo(LocoInfo),
     Serial(u32),
+    /// LAN_X_CV_RESULT. `cv` is 1-based (NMRA).
+    CvResult {
+        cv: u16,
+        value: u8,
+    },
+    /// LAN_X_CV_NACK.
+    CvNack,
+    /// LAN_X_CV_NACK_SC (short circuit on the programming track).
+    CvNackSc,
 }
 
 /// Session-less client: firmware owns UDP.
@@ -432,6 +570,10 @@ impl Client {
                 emit(Event::LocoInfo(info));
                 continue;
             }
+            if let Some(ev) = parse_cv_record(pkt) {
+                emit(ev);
+                continue;
+            }
             if valid_frame(pkt) && pkt.len() >= 8 {
                 let header = u16::from_le_bytes([pkt[2], pkt[3]]);
                 if header == HEADER_GET_SERIAL {
@@ -454,6 +596,10 @@ impl Client {
             Command::SetFunction { addr, func, on } => encode_set_function(out, addr, func, on),
             Command::GetLocoInfo { addr } => encode_get_loco_info(out, addr),
             Command::TrackPower { on } => encode_track_power(out, on),
+            Command::CvRead { cv } => encode_cv_read(out, cv),
+            Command::CvWrite { cv, value } => encode_cv_write(out, cv, value),
+            Command::PomRead { addr, cv } => encode_pom_read(out, addr, cv),
+            Command::PomWrite { addr, cv, value } => encode_pom_write(out, addr, cv, value),
         }
     }
 }
@@ -491,7 +637,8 @@ mod tests {
         let bytes = s.as_bytes();
         let mut i = 0;
         while i + 1 < bytes.len() {
-            let b = u8::from_str_radix(core::str::from_utf8(&bytes[i..i + 2]).unwrap(), 16).unwrap();
+            let b =
+                u8::from_str_radix(core::str::from_utf8(&bytes[i..i + 2]).unwrap(), 16).unwrap();
             out.push(b).unwrap();
             i += 2;
         }
@@ -554,5 +701,149 @@ mod tests {
             assert_eq!(hi, c.fields["hi"].as_u64().unwrap() as u8, "{}", c.id);
             assert_eq!(bits, c.fields["bits"].as_u64().unwrap() as u32, "{}", c.id);
         }
+    }
+
+    #[test]
+    fn pom_write_encodes() {
+        let mut out = WireBuf::new();
+        Client::new()
+            .encode(
+                &Command::PomWrite {
+                    addr: 128,
+                    cv: 1,
+                    value: 0xAA,
+                },
+                &mut out,
+            )
+            .unwrap();
+        assert_eq!(out[0], 0x0C);
+        assert_eq!(&out[4..6], &[0xE6, 0x30]);
+        assert_eq!(out[6], 0xC0);
+        assert_eq!(out[7], 0x80);
+        assert_eq!(out[8], 0xEC);
+        assert_eq!(out[9], 0x00);
+        assert_eq!(out[10], 0xAA);
+    }
+
+    #[test]
+    fn cv_read_matches_wizard() {
+        let mut out = WireBuf::new();
+        encode_cv_read(&mut out, 1).unwrap();
+        assert_eq!(
+            out.as_slice(),
+            &[0x09, 0x00, 0x40, 0x00, 0x23, 0x11, 0x00, 0x00, 0x32]
+        );
+    }
+
+    #[test]
+    fn cv_write_matches_wizard() {
+        let mut out = WireBuf::new();
+        encode_cv_write(&mut out, 8, 0x20).unwrap();
+        assert_eq!(
+            out.as_slice(),
+            &[0x0A, 0x00, 0x40, 0x00, 0x24, 0x12, 0x00, 0x07, 0x20, 0x11]
+        );
+    }
+
+    #[test]
+    fn cv_vectors_match_go() {
+        let cli = Client::new();
+        for c in load("z21/cv.json").cases {
+            let want = decode_hex(&c.hex);
+            let mut out = WireBuf::new();
+            match c.op.as_str() {
+                "cv_read" => {
+                    let cv = c.fields["cv"].as_u64().unwrap() as u16;
+                    cli.encode(&Command::CvRead { cv }, &mut out).unwrap();
+                }
+                "cv_write" => {
+                    let cv = c.fields["cv"].as_u64().unwrap() as u16;
+                    let value = c.fields["value"].as_u64().unwrap() as u8;
+                    cli.encode(&Command::CvWrite { cv, value }, &mut out)
+                        .unwrap();
+                }
+                "pom_read" => {
+                    let addr = c.fields["addr"].as_u64().unwrap() as u16;
+                    let cv = c.fields["cv"].as_u64().unwrap() as u16;
+                    cli.encode(&Command::PomRead { addr, cv }, &mut out)
+                        .unwrap();
+                }
+                "cv_result" | "cv_nack" | "cv_nack_sc" => {
+                    // replies are parsed, not encoded as Command
+                }
+                _ => panic!("unknown op {}", c.op),
+            }
+            if matches!(c.op.as_str(), "cv_read" | "cv_write" | "pom_read") {
+                assert_eq!(out.as_slice(), want.as_slice(), "{}", c.id);
+            }
+            match c.op.as_str() {
+                "cv_result" => {
+                    assert_eq!(
+                        parse_cv_reply(want.as_slice()),
+                        Some(Event::CvResult { cv: 8, value: 0x20 }),
+                        "{}",
+                        c.id
+                    );
+                }
+                "cv_nack" => {
+                    assert_eq!(
+                        parse_cv_reply(want.as_slice()),
+                        Some(Event::CvNack),
+                        "{}",
+                        c.id
+                    );
+                }
+                "cv_nack_sc" => {
+                    assert_eq!(
+                        parse_cv_reply(want.as_slice()),
+                        Some(Event::CvNackSc),
+                        "{}",
+                        c.id
+                    );
+                }
+                _ => {}
+            }
+        }
+    }
+
+    #[test]
+    fn on_bytes_emits_cv_events() {
+        let mut cli = Client::new();
+        for c in load("z21/cv.json").cases {
+            let pkt = decode_hex(&c.hex);
+            let mut events: std::vec::Vec<Event> = std::vec::Vec::new();
+            cli.on_bytes(pkt.as_slice(), &mut |ev| events.push(ev));
+            match c.op.as_str() {
+                "cv_result" => {
+                    assert_eq!(events, [Event::CvResult { cv: 8, value: 0x20 }], "{}", c.id);
+                }
+                "cv_nack" => assert_eq!(events, [Event::CvNack], "{}", c.id),
+                "cv_nack_sc" => assert_eq!(events, [Event::CvNackSc], "{}", c.id),
+                _ => assert!(events.is_empty(), "{} should not emit inbound events", c.id),
+            }
+        }
+    }
+
+    #[test]
+    fn address_from_cvs_short_and_long() {
+        assert_eq!(address_from_cvs(7, 0, 0, 0x06), Some((7, false)));
+        assert_eq!(address_from_cvs(0, 0xC4, 0xD2, 0x26), Some((1234, true)));
+    }
+
+    #[test]
+    fn address_cv_writes_short_clears_long_bit() {
+        let writes = address_cv_writes(7, 0x26).unwrap();
+        assert_eq!(writes.as_slice(), &[(1, 7), (29, 0x06)]);
+    }
+
+    #[test]
+    fn address_cv_writes_long_sets_cv17_18() {
+        let writes = address_cv_writes(1234, 0x06).unwrap();
+        assert_eq!(writes.as_slice(), &[(17, 0xC4), (18, 0xD2), (29, 0x26)]);
+    }
+
+    #[test]
+    fn address_cv_writes_rejects_zero() {
+        assert_eq!(address_cv_writes(0, 0), Err(Error::InvalidAddress));
     }
 }

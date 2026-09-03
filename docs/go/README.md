@@ -168,6 +168,31 @@ Supported ranges:
 
 WiThrottle returns `commandstation.ErrUnsupported` for `ReadCV` / `WriteCV`.
 
+## CV programming
+
+Z21 and LocoNet implement `ReadCV` / `WriteCV` on `Station` after `Open`. WiThrottle returns `ErrUnsupported`.
+
+```go
+st, err := commandstation.Open("z21://192.168.0.111:21105")
+if err != nil {
+	log.Fatal(err)
+}
+defer st.CleanUp()
+
+v, err := st.ReadCV(commandstation.ProgrammingTrackMode, commandstation.LocoCV{
+	Cv: commandstation.CV{Num: 8},
+})
+if err != nil {
+	log.Fatal(err)
+}
+err = st.WriteCV(commandstation.MainTrackMode, commandstation.LocoCV{
+	LocoId: 42,
+	Cv:     commandstation.CV{Num: 8, Value: v},
+})
+```
+
+Hosts that own their own UDP socket (no `Station`) can encode with `z21.BuildProgRead` / `BuildProgWrite` / `BuildPomRead` / `BuildPomWriteByte` (wire CV is 0-based: NMRA CV−1) and decode replies with `z21.ParseCvReply` (1-based CV in `CvReply`). `z21.AddressFromCVs` / `AddressCVWrites` map CV1 / 17 / 18 / 29 to a locomotive address.
+
 ## Emergency stop — `EmergencyStop`
 
 `EmergencyStop` stops **one** locomotive using the protocol's emergency command (not a global layout e-stop):

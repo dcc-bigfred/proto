@@ -140,6 +140,54 @@ func ParseTrackPower(pkt []byte) (on bool, ok bool) {
 	}
 }
 
+// CvReplyKind is the kind of LAN_X_CV_* programming reply.
+type CvReplyKind int
+
+const (
+	// CvResult is LAN_X_CV_RESULT (1-based CV number).
+	CvResult CvReplyKind = iota
+	// CvNack is LAN_X_CV_NACK (decoder did not acknowledge).
+	CvNack
+	// CvNackSC is LAN_X_CV_NACK_SC (short circuit on the programming track).
+	CvNackSC
+)
+
+// CvReply is a parsed CV programming reply. CV is 1-based (NMRA).
+type CvReply struct {
+	Kind  CvReplyKind
+	CV    uint16
+	Value byte
+}
+
+// ParseCvReply walks concatenated Z21 records and returns the first CV reply.
+func ParseCvReply(buf []byte) (CvReply, bool) {
+	for _, rec := range SplitDatagram(buf) {
+		if r, ok := parseCvRecord(rec); ok {
+			return r, true
+		}
+	}
+	return CvReply{}, false
+}
+
+func parseCvRecord(pkt []byte) (CvReply, bool) {
+	_, header, ok := PacketHeader(pkt)
+	if !ok || header != HeaderXBus || len(pkt) < 6 {
+		return CvReply{}, false
+	}
+	d := pkt[4:]
+	if len(d) >= 6 && d[0] == 0x64 && d[1] == 0x14 {
+		wire := uint16(d[2])<<8 | uint16(d[3])
+		return CvReply{Kind: CvResult, CV: wire + 1, Value: d[4]}, true
+	}
+	if len(d) >= 2 && d[0] == 0x61 && d[1] == 0x13 {
+		return CvReply{Kind: CvNack}, true
+	}
+	if len(d) >= 2 && d[0] == 0x61 && d[1] == 0x12 {
+		return CvReply{Kind: CvNackSC}, true
+	}
+	return CvReply{}, false
+}
+
 func handshakeReply(pkt []byte, serial uint32) ([]byte, bool) {
 	_, header, ok := PacketHeader(pkt)
 	if !ok {

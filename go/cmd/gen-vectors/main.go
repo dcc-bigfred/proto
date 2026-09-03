@@ -38,6 +38,7 @@ func run() error {
 		{filepath.Join(td, "loconet", "gpon.json"), loconetCases()},
 		{filepath.Join(td, "z21", "frames.json"), z21Cases()},
 		{filepath.Join(td, "z21", "function_group.json"), z21FunctionGroupCases()},
+		{filepath.Join(td, "z21", "cv.json"), z21CVCases()},
 		{filepath.Join(td, "withrottle", "lines.json"), withrottleCases()},
 		{filepath.Join(td, "withrottle", "function_press.json"), withrottlePressCases()},
 	}
@@ -155,6 +156,45 @@ func withrottleCases() vectors.File {
 		}
 	}
 	return vectors.File{Cases: cases}
+}
+
+func z21CVCases() vectors.File {
+	return vectors.File{Cases: []vectors.Case{
+		{
+			ID:     "cv_read_1",
+			Hex:    hx(z21.BuildProgRead(0)),
+			Op:     "cv_read",
+			Fields: fields(map[string]any{"cv": 1}),
+		},
+		{
+			ID:     "cv_write_8_0x20",
+			Hex:    hx(z21.BuildProgWrite(7, 0x20)),
+			Op:     "cv_write",
+			Fields: fields(map[string]any{"cv": 8, "value": 0x20}),
+		},
+		{
+			ID:     "pom_read_128_cv1",
+			Hex:    hx(z21.BuildPomRead(128, 0)),
+			Op:     "pom_read",
+			Fields: fields(map[string]any{"addr": 128, "cv": 1}),
+		},
+		{
+			ID:     "cv_result_8_0x20",
+			Hex:    hx(z21.BuildCvResult(8, 0x20)),
+			Op:     "cv_result",
+			Fields: fields(map[string]any{"cv": 8, "value": 0x20}),
+		},
+		{
+			ID:  "cv_nack",
+			Hex: hx(z21.BuildCvNack()),
+			Op:  "cv_nack",
+		},
+		{
+			ID:  "cv_nack_sc",
+			Hex: hx(z21.BuildCvNackSC()),
+			Op:  "cv_nack_sc",
+		},
+	}}
 }
 
 func z21FunctionGroupCases() vectors.File {

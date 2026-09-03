@@ -60,7 +60,7 @@ out.clear();
 cli.encode(&z21::Command::TrackPower { on: true }, &mut out)?;
 ```
 
-Parse inbound datagrams with `on_bytes` (`Event::Serial`, `Event::LocoInfo`). Speed `0` is a normal stop; `1` is e-stop.
+Parse inbound datagrams with `on_bytes` (`Event::Serial`, `Event::LocoInfo`, `Event::CvResult` / `CvNack` / `CvNackSc`). Speed `0` is a normal stop; `1` is e-stop. CV/POM commands use 1-based NMRA numbers (`Command::CvRead`, `CvWrite`, `PomRead`, `PomWrite`).
 
 UDP sketch (`std`):
 
