@@ -27,7 +27,7 @@ type gateHost struct {
 	mu          sync.Mutex
 }
 
-func (h *gateHost) Acquire(_ drive.ClientID, _ uint16) (bool, []string) {
+func (h *gateHost) Acquire(_ drive.ClientID, _ byte, _ uint16) (bool, []string) {
 	return h.proceed, h.custom
 }
 func (h *gateHost) Action(drive.ClientID, byte, string, uint16, string) bool { return h.actionOK }

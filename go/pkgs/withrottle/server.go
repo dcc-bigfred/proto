@@ -471,7 +471,7 @@ func (s *Server) handleM(sess *session, line string) {
 		proceed := true
 		var custom []string
 		if g, ok := s.host.(drive.AcquireGate); ok {
-			proceed, custom = g.Acquire(sess.id, addr)
+			proceed, custom = g.Acquire(sess.id, cmd.ThrottleID, addr)
 		}
 		hold := proceed || acquireHolds(custom)
 		if hold {
@@ -485,6 +485,29 @@ func (s *Server) handleM(sess *session, line string) {
 			}
 			return
 		}
+		if len(custom) > 0 {
+			for _, l := range custom {
+				sess.write(l)
+			}
+		} else {
+			st, err := s.host.LocoState(addr)
+			if err != nil {
+				st = drive.LocoState{Addr: addr, Steps: 128, Forward: true}
+			}
+			if st.Addr == 0 {
+				st.Addr = addr
+			}
+			for _, l := range buildAcquireReply(cmd.ThrottleID, addr, locoView{
+				Speed: st.Speed, Forward: st.Forward, Functions: st.Functions,
+			}) {
+				sess.write(l)
+			}
+			if s.cfg.labels != nil {
+				if line := FormatLabelLine(cmd.ThrottleID, LocoKey(addr), s.cfg.labels.Labels(sess.id, addr)); line != "" {
+					sess.write(line)
+				}
+			}
+		}
 		if sub, ok := s.host.(drive.Subscriber); ok {
 			if err := sub.Subscribe(sess.id, addr); err != nil {
 				s.mu.Lock()
@@ -495,29 +518,6 @@ func (s *Server) handleM(sess *session, line string) {
 					sess.write("HM" + truncateHM(err.Error()))
 				}
 				return
-			}
-		}
-		if len(custom) > 0 {
-			for _, l := range custom {
-				sess.write(l)
-			}
-			return
-		}
-		st, err := s.host.LocoState(addr)
-		if err != nil {
-			st = drive.LocoState{Addr: addr, Steps: 128, Forward: true}
-		}
-		if st.Addr == 0 {
-			st.Addr = addr
-		}
-		for _, l := range buildAcquireReply(cmd.ThrottleID, addr, locoView{
-			Speed: st.Speed, Forward: st.Forward, Functions: st.Functions,
-		}) {
-			sess.write(l)
-		}
-		if s.cfg.labels != nil {
-			if line := FormatLabelLine(cmd.ThrottleID, LocoKey(addr), s.cfg.labels.Labels(sess.id, addr)); line != "" {
-				sess.write(line)
 			}
 		}
 	case MOpRemove:
@@ -607,10 +607,17 @@ func (s *Server) handleAction(sess *session, cmd MCommand) {
 	}
 	prop := cmd.Properties[0]
 	addrs := s.addrs(sess, cmd.LocoKey)
-	if len(addrs) == 0 {
-		return
-	}
 	if g, ok := s.host.(drive.ActionGate); ok {
+		if len(addrs) == 0 {
+			if cmd.LocoKey != "*" {
+				if addr, _, parsed := ParseLocoKey(cmd.LocoKey); parsed {
+					if g.Action(sess.id, cmd.ThrottleID, cmd.LocoKey, addr, prop) {
+						return
+					}
+				}
+			}
+			return
+		}
 		allHandled := true
 		for _, addr := range addrs {
 			if !g.Action(sess.id, cmd.ThrottleID, cmd.LocoKey, addr, prop) {
@@ -621,6 +628,9 @@ func (s *Server) handleAction(sess *session, cmd MCommand) {
 		if allHandled {
 			return
 		}
+	}
+	if len(addrs) == 0 {
+		return
 	}
 	switch {
 	case len(prop) >= 2 && prop[0] == 'V':

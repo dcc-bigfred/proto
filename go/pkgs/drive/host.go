@@ -38,7 +38,7 @@ type FunctionModer interface {
 // If customReply contains an M+ line, the server still records the loco so
 // later M A actions can be gated (sentinel pairing).
 type AcquireGate interface {
-	Acquire(client ClientID, addr uint16) (proceed bool, customReply []string)
+	Acquire(client ClientID, throttleID byte, addr uint16) (proceed bool, customReply []string)
 }
 
 // ActionGate is consulted on WiThrottle M A before SetSpeed/SetFunction.
@@ -60,7 +60,7 @@ type TrackPowerGate interface {
 	TrackPower(client ClientID, on bool) (handled bool)
 }
 
-// Subscriber is called after AcquireGate.Acquire(proceed=true), before LocoState.
+// Subscriber is called after AcquireGate.Acquire(proceed=true) and the acquire dump.
 type Subscriber interface {
 	Subscribe(client ClientID, addr uint16) error
 }
