@@ -294,8 +294,6 @@ func handshakeReply(pkt []byte, serial uint32) ([]byte, bool) {
 		return BuildHWInfoReply(hwTypeZ21Black, firmwareBCD), true
 	case HeaderGetCode:
 		return BuildLAN(HeaderGetCode, []byte{0x00}), true
-	case HeaderSystemStateGetData:
-		return buildSystemStateReply(), true
 	case HeaderXBus:
 		if len(pkt) < 7 {
 			return nil, false

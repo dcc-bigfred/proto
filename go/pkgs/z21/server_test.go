@@ -193,9 +193,9 @@ func TestFunctionGroupAndBroadcastFlags(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := BcDrivingSwitching | BcAllLocos
+	want := uint32(0)
 	if flags := binary.LittleEndian.Uint32(buf[4:8]); flags != want {
-		t.Fatalf("stored flags=%#x want %#x", flags, want)
+		t.Fatalf("stored flags GET=%#x want %#x (legacy handshake always zeros)", flags, want)
 	}
 
 	pkt := BuildSetLocoFunctionGroup(3, 0x20, 0x03) // F0+F1
@@ -304,4 +304,136 @@ func TestEvictStale(t *testing.T) {
 	if len(host.released) != 1 || host.released[0].addr != 7 {
 		t.Fatalf("evict released = %+v", host.released)
 	}
+}
+
+func TestSystemStateReplyHasRetailTelemetry(t *testing.T) {
+	srv, err := Listen("127.0.0.1:0", &recHost{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = srv.Close() })
+	conn, err := net.DialUDP("udp", nil, srv.Addr().(*net.UDPAddr))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if _, err := conn.Write([]byte{0x04, 0x00, 0x85, 0x00}); err != nil {
+		t.Fatal(err)
+	}
+	buf := make([]byte, 64)
+	n, err := conn.Read(buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, header, ok := PacketHeader(buf[:n])
+	if !ok || header != HeaderSystemStateData {
+		t.Fatalf("header=%#x ok=%v", header, ok)
+	}
+	data := buf[4:20]
+	if int16(binary.LittleEndian.Uint16(data[0:2])) != emuMainCurrentMA {
+		t.Fatalf("main current=%d", int16(binary.LittleEndian.Uint16(data[0:2])))
+	}
+	if int16(binary.LittleEndian.Uint16(data[4:6])) != emuFilteredMainCurrentMA {
+		t.Fatalf("filtered=%d", int16(binary.LittleEndian.Uint16(data[4:6])))
+	}
+	if int16(binary.LittleEndian.Uint16(data[6:8])) != emuTemperatureC {
+		t.Fatalf("temp=%d", int16(binary.LittleEndian.Uint16(data[6:8])))
+	}
+}
+
+type blockingActivityHost struct {
+	recHost
+	slowID  drive.ClientID
+	block   chan struct{}
+	entered chan struct{}
+}
+
+func (h *blockingActivityHost) OnActivity(id drive.ClientID) {
+	if id != h.slowID {
+		return
+	}
+	select {
+	case <-h.entered:
+	default:
+		close(h.entered)
+	}
+	<-h.block
+}
+func (h *blockingActivityHost) OnLogoff(drive.ClientID)                 {}
+func (h *blockingActivityHost) OnBroadcastFlags(drive.ClientID, uint32) {}
+
+func TestSlowActivityDoesNotStallOtherClient(t *testing.T) {
+	slowKey, fastKey := distinctShardKeys(t)
+	host := &blockingActivityHost{
+		slowID:  drive.ClientID(slowKey),
+		block:   make(chan struct{}),
+		entered: make(chan struct{}),
+	}
+	srv, err := Listen("127.0.0.1:0", host, WithClientKeyFunc(func(a *net.UDPAddr) drive.ClientID {
+		if a.Port%2 == 0 {
+			return drive.ClientID(slowKey)
+		}
+		return drive.ClientID(fastKey)
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		close(host.block)
+		_ = srv.Close()
+	})
+
+	dialParity := func(even bool) *net.UDPConn {
+		t.Helper()
+		var last error
+		for p := 41000; p < 41200; p++ {
+			if even != (p%2 == 0) {
+				continue
+			}
+			laddr := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: p}
+			conn, err := net.DialUDP("udp", laddr, srv.Addr().(*net.UDPAddr))
+			if err != nil {
+				last = err
+				continue
+			}
+			t.Cleanup(func() { _ = conn.Close() })
+			return conn
+		}
+		t.Fatalf("bind local udp: %v", last)
+		return nil
+	}
+	slowConn := dialParity(true)
+	fastConn := dialParity(false)
+	_ = slowConn.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+	_ = fastConn.SetReadDeadline(time.Now().Add(2 * time.Second))
+
+	if _, err := slowConn.Write(BuildGetSerialNumber()); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-host.entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("slow OnActivity never entered")
+	}
+	if _, err := fastConn.Write(BuildGetSerialNumber()); err != nil {
+		t.Fatal(err)
+	}
+	buf := make([]byte, 64)
+	if _, err := fastConn.Read(buf); err != nil {
+		t.Fatalf("fast client stalled behind slow OnActivity: %v", err)
+	}
+}
+
+func distinctShardKeys(t *testing.T) (slow, fast string) {
+	t.Helper()
+	slow = "z21-slow"
+	for i := 0; i < 64; i++ {
+		fast = "z21-fast-" + string(rune('a'+i))
+		if shardIndex(slow, dispatchShards) != shardIndex(fast, dispatchShards) {
+			return slow, fast
+		}
+	}
+	t.Fatal("could not pick distinct shards")
+	return "", ""
 }

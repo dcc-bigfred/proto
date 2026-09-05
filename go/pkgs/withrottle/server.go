@@ -52,6 +52,7 @@ type session struct {
 	momentary map[uint16]map[uint8]bool
 
 	burstSent bool
+	connected bool // OnConnect delivered for the current id
 	lastRx    atomic.Int64
 	hbOn      atomic.Bool
 }
@@ -170,6 +171,13 @@ func (s *Server) sessionByID(id drive.ClientID) *session {
 	return s.byID[id]
 }
 
+// HasSession reports whether a live TCP session is registered for client.
+// Consumers use this to ignore OnDisconnect from an HU takeover: the old
+// connection's drop runs after the replacement is already in byID.
+func (s *Server) HasSession(client drive.ClientID) bool {
+	return s.sessionByID(client) != nil
+}
+
 // NotifyLocoState pushes M…A V/R/F lines to sessions that acquired addr.
 func (s *Server) NotifyLocoState(st drive.LocoState) {
 	s.notifyLocoState(st, "")
@@ -270,8 +278,16 @@ func (s *Server) serve(conn net.Conn) {
 			return
 		}
 		sess.touch()
-		s.handle(sess, strings.TrimRight(sc.Text(), "\r"))
+		s.handleLine(sess, strings.TrimRight(sc.Text(), "\r"))
 	}
+}
+
+// handleLine contains a panic raised while processing one line (typically
+// inside a host callback) so a single bad line drops neither the session
+// nor the process.
+func (s *Server) handleLine(sess *session, line string) {
+	defer func() { _ = recover() }()
+	s.handle(sess, line)
 }
 
 func (s *Server) hbLoop() {
@@ -335,7 +351,11 @@ func (s *Server) deadman(sess *session) {
 func (s *Server) drop(sess *session) {
 	s.mu.Lock()
 	delete(s.conns, sess.conn)
-	if s.byID[sess.id] == sess {
+	// HU takeover installs the new session in byID before closing the
+	// old TCP. Skip OnDisconnect/Release so the consumer does not evict
+	// the live ClientID (and close the replacement connection).
+	replaced := s.byID[sess.id] != sess
+	if !replaced {
 		delete(s.byID, sess.id)
 	}
 	locos := make([]uint16, 0, len(sess.locos))
@@ -344,6 +364,9 @@ func (s *Server) drop(sess *session) {
 	}
 	id := sess.id
 	s.mu.Unlock()
+	if replaced {
+		return
+	}
 	if h, ok := s.host.(drive.SessionHooks); ok {
 		h.OnDisconnect(id)
 	}
@@ -401,15 +424,23 @@ func (s *Server) handleHU(sess *session, device string) {
 			delete(s.byID, oldID)
 		}
 	}
-	if prev, ok := s.byID[sess.id]; ok && prev != sess {
-		s.mu.Unlock()
-		_ = prev.conn.Close()
-		s.mu.Lock()
+	var prev *session
+	if p, ok := s.byID[sess.id]; ok && p != sess {
+		prev = p
 	}
 	s.byID[sess.id] = sess
 	s.mu.Unlock()
-	if h, ok := s.host.(drive.SessionHooks); ok {
-		h.OnConnect(sess.id, device)
+	if prev != nil {
+		_ = prev.conn.Close()
+	}
+	// A repeated HU with the same device on the same TCP session is not a
+	// new connection; consumers treat OnConnect for an already known client
+	// as a takeover and reset per-connection state.
+	if oldID != sess.id || !sess.connected {
+		sess.connected = true
+		if h, ok := s.host.(drive.SessionHooks); ok {
+			h.OnConnect(sess.id, device)
+		}
 	}
 	if !sess.burstSent {
 		s.sendBurst(sess)
@@ -573,13 +604,11 @@ func (s *Server) handleRemove(sess *session, cmd MCommand) {
 		sess.locos = map[uint16]struct{}{}
 		s.mu.Unlock()
 		if g, ok := s.host.(drive.ReleaseGate); ok {
-			handled := false
-			for _, addr := range released {
-				if g.GateRelease(sess.id, cmd.ThrottleID, cmd.LocoKey, addr) {
-					handled = true
-				}
+			addr := uint16(0)
+			if len(released) > 0 {
+				addr = released[0]
 			}
-			if handled {
+			if g.GateRelease(sess.id, cmd.ThrottleID, cmd.LocoKey, addr) {
 				return
 			}
 		}
@@ -618,15 +647,24 @@ func (s *Server) handleAction(sess *session, cmd MCommand) {
 			}
 			return
 		}
-		allHandled := true
-		for _, addr := range addrs {
-			if !g.Action(sess.id, cmd.ThrottleID, cmd.LocoKey, addr, prop) {
-				allHandled = false
-				break
+		if cmd.LocoKey == "*" {
+			// One wire command, one gate call: the consumer expands "*" over
+			// its own per-throttle view. Calling per held address would
+			// replay the same action len(addrs) times.
+			if g.Action(sess.id, cmd.ThrottleID, cmd.LocoKey, addrs[0], prop) {
+				return
 			}
-		}
-		if allHandled {
-			return
+		} else {
+			allHandled := true
+			for _, addr := range addrs {
+				if !g.Action(sess.id, cmd.ThrottleID, cmd.LocoKey, addr, prop) {
+					allHandled = false
+					break
+				}
+			}
+			if allHandled {
+				return
+			}
 		}
 	}
 	if len(addrs) == 0 {

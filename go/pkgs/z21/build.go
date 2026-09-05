@@ -203,10 +203,26 @@ func buildStatusChangedReply() []byte {
 	return xbus([]byte{0x62, 0x22, 0x00})
 }
 
-func buildSystemStateReply() []byte {
+const (
+	emuMainCurrentMA         int16  = 22
+	emuFilteredMainCurrentMA int16  = 20
+	emuTemperatureC          int16  = 38
+	emuSupplyVoltageMV       uint16 = 15200
+	emuVCCVoltageMV          uint16 = 12000
+	emuCapabilities          byte   = 0x01 | 0x10 | 0x20 // DCC + loco + accessory
+)
+
+func defaultSystemStateData() []byte {
 	data := make([]byte, 16)
-	binary.LittleEndian.PutUint16(data[8:10], 15200)  // supply mV
-	binary.LittleEndian.PutUint16(data[10:12], 12000) // track mV
-	data[15] = 0x01 | 0x10 | 0x20                     // DCC + loco + accessory
-	return BuildLAN(HeaderSystemStateData, data)
+	binary.LittleEndian.PutUint16(data[0:2], uint16(emuMainCurrentMA))
+	binary.LittleEndian.PutUint16(data[4:6], uint16(emuFilteredMainCurrentMA))
+	binary.LittleEndian.PutUint16(data[6:8], uint16(emuTemperatureC))
+	binary.LittleEndian.PutUint16(data[8:10], emuSupplyVoltageMV)
+	binary.LittleEndian.PutUint16(data[10:12], emuVCCVoltageMV)
+	data[15] = emuCapabilities
+	return data
+}
+
+func buildSystemStateReply() []byte {
+	return BuildLAN(HeaderSystemStateData, defaultSystemStateData())
 }

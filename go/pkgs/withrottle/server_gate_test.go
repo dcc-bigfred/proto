@@ -267,6 +267,149 @@ func TestHUTakeoverClosesPriorConn(t *testing.T) {
 	t.Fatal("first connection should be closed after takeover")
 }
 
+func TestHUTakeoverDoesNotOnDisconnectLiveID(t *testing.T) {
+	h := &gateHost{proceed: true}
+	srv, err := Listen("127.0.0.1:0", h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = srv.Close() })
+	first, _ := net.Dial("tcp", srv.Addr().String())
+	t.Cleanup(func() { _ = first.Close() })
+	_ = first.SetDeadline(time.Now().Add(3 * time.Second))
+	fmt.Fprintln(first, "HUsame")
+	fr := bufio.NewReader(first)
+	drainUntil(t, fr, func(line string) bool { return strings.HasPrefix(line, "HT") })
+	second, _ := net.Dial("tcp", srv.Addr().String())
+	t.Cleanup(func() { _ = second.Close() })
+	_ = second.SetDeadline(time.Now().Add(3 * time.Second))
+	fmt.Fprintln(second, "HUsame")
+	sr := bufio.NewReader(second)
+	drainUntil(t, sr, func(line string) bool { return strings.HasPrefix(line, "HT") })
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		h.mu.Lock()
+		d := h.disconnects
+		h.mu.Unlock()
+		if d != 0 {
+			t.Fatalf("OnDisconnect=%d after HU takeover; live ClientID must stay", d)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if !srv.HasSession("withrottle:same") {
+		t.Fatal("replacement session missing")
+	}
+}
+
+type releaseStarHost struct {
+	recHost
+	mu    sync.Mutex
+	addrs []uint16
+	keys  []string
+}
+
+func (h *releaseStarHost) GateRelease(_ drive.ClientID, _ byte, key string, addr uint16) bool {
+	h.mu.Lock()
+	h.addrs = append(h.addrs, addr)
+	h.keys = append(h.keys, key)
+	h.mu.Unlock()
+	return true
+}
+
+func TestReleaseStarCallsGateOnce(t *testing.T) {
+	h := &releaseStarHost{}
+	srv, err := Listen("127.0.0.1:0", h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = srv.Close() })
+	conn, r := wtDialHU(t, srv, "star")
+	fmt.Fprintln(conn, "M0+S3<;>S3")
+	drainUntil(t, r, func(line string) bool { return strings.HasPrefix(line, "M0+S3") })
+	fmt.Fprintln(conn, "M0+L128<;>L128")
+	drainUntil(t, r, func(line string) bool { return strings.HasPrefix(line, "M0+L128") })
+	fmt.Fprintln(conn, "M0-*<;>")
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		h.mu.Lock()
+		n := len(h.addrs)
+		keys := append([]string(nil), h.keys...)
+		h.mu.Unlock()
+		if n >= 1 {
+			if n != 1 {
+				t.Fatalf("GateRelease called %d times, want 1", n)
+			}
+			if keys[0] != "*" {
+				t.Fatalf("locoKey=%q want *", keys[0])
+			}
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("GateRelease not called")
+}
+
+type actionStarHost struct {
+	recHost
+	mu    sync.Mutex
+	calls []string
+}
+
+func (h *actionStarHost) Action(_ drive.ClientID, _ byte, key string, addr uint16, prop string) bool {
+	h.mu.Lock()
+	h.calls = append(h.calls, fmt.Sprintf("%s/%d/%s", key, addr, prop))
+	h.mu.Unlock()
+	return true
+}
+
+func TestActionStarCallsGateOnce(t *testing.T) {
+	h := &actionStarHost{}
+	srv, err := Listen("127.0.0.1:0", h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = srv.Close() })
+	conn, r := wtDialHU(t, srv, "actstar")
+	fmt.Fprintln(conn, "M0+S3<;>S3")
+	drainUntil(t, r, func(line string) bool { return strings.HasPrefix(line, "M0+S3") })
+	fmt.Fprintln(conn, "M0+L128<;>L128")
+	drainUntil(t, r, func(line string) bool { return strings.HasPrefix(line, "M0+L128") })
+	fmt.Fprintln(conn, "M0A*<;>V40")
+	time.Sleep(120 * time.Millisecond)
+	h.mu.Lock()
+	calls := append([]string(nil), h.calls...)
+	h.mu.Unlock()
+	if len(calls) != 1 {
+		t.Fatalf("Action calls = %v, want exactly one for M0A*", calls)
+	}
+	if !strings.HasPrefix(calls[0], "*/") || !strings.HasSuffix(calls[0], "/V40") {
+		t.Fatalf("Action call = %q, want */<addr>/V40", calls[0])
+	}
+	if fns := h.fnsCopy(); len(fns) != 0 {
+		t.Fatalf("default drive path ran after gate handled *: %+v", fns)
+	}
+}
+
+func TestRepeatedHUSameSessionFiresOnConnectOnce(t *testing.T) {
+	h := &gateHost{proceed: true}
+	srv, err := Listen("127.0.0.1:0", h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = srv.Close() })
+	conn, r := wtDialHU(t, srv, "again")
+	fmt.Fprintln(conn, "HUagain")
+	fmt.Fprintln(conn, "*")
+	time.Sleep(100 * time.Millisecond)
+	_ = r
+	h.mu.Lock()
+	n := len(h.connects)
+	h.mu.Unlock()
+	if n != 1 {
+		t.Fatalf("OnConnect fired %d times for one TCP session, want 1", n)
+	}
+}
+
 func TestFormatRosterLineSorted(t *testing.T) {
 	got := FormatRosterLine([]RosterEntry{{Name: "B", Addr: 200}, {Name: "A", Addr: 3}})
 	want := `RL2]\[A}|{3}|{S]\[B}|{200}|{L`

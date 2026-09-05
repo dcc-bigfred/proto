@@ -15,9 +15,10 @@ const (
 )
 
 type z21config struct {
-	keyFn  func(*net.UDPAddr) drive.ClientID
-	serial uint32
-	ttl    time.Duration
+	keyFn    func(*net.UDPAddr) drive.ClientID
+	serial   uint32
+	ttl      time.Duration
+	sysState []byte
 }
 
 func defaultZ21Config() z21config {
@@ -54,12 +55,24 @@ func WithPeerTTL(d time.Duration) Option {
 	return func(c *z21config) { c.ttl = d }
 }
 
+// WithSystemStatePayload replaces the 16-byte LAN_SYSTEMSTATE_DATACHANGED
+// body (BigFred DefaultSystemState / cfg.SystemState).
+func WithSystemStatePayload(data []byte) Option {
+	return func(c *z21config) {
+		if len(data) == 16 {
+			c.sysState = append([]byte(nil), data...)
+		}
+	}
+}
+
 // Server is an inbound Z21 LAN UDP listener.
 type Server struct {
-	host drive.DriveHost
-	cfg  z21config
-	conn *net.UDPConn
-	done chan struct{}
+	host     drive.DriveHost
+	cfg      z21config
+	conn     *net.UDPConn
+	done     chan struct{}
+	dispatch *dispatcher
+	loops    sync.WaitGroup
 
 	mu    sync.Mutex
 	peers map[drive.ClientID]*peer
@@ -112,15 +125,24 @@ func Listen(bind string, host drive.DriveHost, opts ...Option) (*Server, error) 
 		return nil, err
 	}
 	s := &Server{
-		host:  host,
-		cfg:   cfg,
-		conn:  conn,
-		done:  make(chan struct{}),
-		peers: make(map[drive.ClientID]*peer),
+		host:     host,
+		cfg:      cfg,
+		conn:     conn,
+		done:     make(chan struct{}),
+		peers:    make(map[drive.ClientID]*peer),
+		dispatch: newDispatcher(dispatchShards, dispatchShardBuf),
 	}
-	go s.readLoop()
+	s.loops.Add(1)
+	go func() {
+		defer s.loops.Done()
+		s.readLoop()
+	}()
 	if cfg.ttl > 0 {
-		go s.ttlLoop()
+		s.loops.Add(1)
+		go func() {
+			defer s.loops.Done()
+			s.ttlLoop()
+		}()
 	}
 	return s, nil
 }
@@ -135,7 +157,10 @@ func (s *Server) Close() error {
 	default:
 		close(s.done)
 	}
-	return s.conn.Close()
+	err := s.conn.Close()
+	s.loops.Wait()
+	s.dispatch.close()
+	return err
 }
 
 func (s *Server) clientID(from *net.UDPAddr) drive.ClientID {
@@ -235,14 +260,33 @@ func (s *Server) readLoop() {
 			return
 		}
 		payload := append([]byte(nil), buf[:n]...)
-		s.notePeer(from)
-		if h, ok := s.host.(SessionHooks); ok {
-			h.OnActivity(s.clientID(from))
-		}
-		for _, pkt := range SplitDatagram(payload) {
-			s.handle(pkt, from)
-		}
+		fromCopy := cloneUDPAddr(from)
+		id := s.clientID(fromCopy)
+		s.dispatch.dispatch(string(id), func() {
+			s.serveDatagram(payload, fromCopy)
+		})
 	}
+}
+
+func (s *Server) serveDatagram(payload []byte, from *net.UDPAddr) {
+	s.notePeer(from)
+	if h, ok := s.host.(SessionHooks); ok {
+		h.OnActivity(s.clientID(from))
+	}
+	for _, pkt := range SplitDatagram(payload) {
+		s.handle(pkt, from)
+	}
+}
+
+func cloneUDPAddr(a *net.UDPAddr) *net.UDPAddr {
+	if a == nil {
+		return nil
+	}
+	out := *a
+	if a.IP != nil {
+		out.IP = append(net.IP(nil), a.IP...)
+	}
+	return &out
 }
 
 func (s *Server) ttlLoop() {
@@ -335,6 +379,13 @@ func (s *Server) dropPeerID(id drive.ClientID, logoff bool) {
 	}
 }
 
+func (s *Server) systemStateFrame() []byte {
+	if len(s.cfg.sysState) == 16 {
+		return BuildLAN(HeaderSystemStateData, s.cfg.sysState)
+	}
+	return buildSystemStateReply()
+}
+
 func (s *Server) gated(id drive.ClientID, op DriveOp, addr uint16, pkt []byte) bool {
 	g, ok := s.host.(DriveGate)
 	if !ok {
@@ -355,18 +406,18 @@ func (s *Server) handle(pkt []byte, from *net.UDPAddr) {
 			h.OnBroadcastFlags(id, flags)
 		}
 		if flags&BcSystemState != 0 {
-			_, _ = s.conn.WriteToUDP(buildSystemStateReply(), from)
+			_, _ = s.conn.WriteToUDP(s.systemStateFrame(), from)
 		}
 		return
 	}
 	if _, header, ok := PacketHeader(pkt); ok && header == HeaderGetBroadcastFlags {
-		s.mu.Lock()
-		var flags uint32
-		if p, ok := s.peers[id]; ok {
-			flags = p.flags
-		}
-		s.mu.Unlock()
-		_, _ = s.conn.WriteToUDP(BuildBroadcastFlagsReply(flags), from)
+		// Match BigFred v1 handshake: GET always returns zeros. SET still
+		// stores flags for NotifyLocoState / wantsLoco.
+		_, _ = s.conn.WriteToUDP(BuildBroadcastFlagsReply(0), from)
+		return
+	}
+	if _, header, ok := PacketHeader(pkt); ok && header == HeaderSystemStateGetData {
+		_, _ = s.conn.WriteToUDP(s.systemStateFrame(), from)
 		return
 	}
 	if reply, ok := handshakeReply(pkt, s.cfg.serial); ok {

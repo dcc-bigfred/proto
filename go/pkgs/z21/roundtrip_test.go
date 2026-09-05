@@ -157,3 +157,34 @@ drain:
 		t.Fatal("NotifyLocoState not observed")
 	}
 }
+
+func TestEmergencyStopUsesCatalogueSteps(t *testing.T) {
+	host := &recHost{}
+	srv, err := z21.Listen("127.0.0.1:0", host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = srv.Close() })
+
+	udp := srv.Addr().(*net.UDPAddr)
+	cli, err := commandstation.NewZ21Roco("127.0.0.1", uint16(udp.Port))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cli.CleanUp() })
+	cli.SetSpeedSteps(28)
+	if err := cli.EmergencyStop(5, true); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && len(host.speeds) == 0 {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if len(host.speeds) == 0 {
+		t.Fatal("EmergencyStop did not reach host")
+	}
+	got := host.speeds[0]
+	if got.Speed != 1 || got.Steps != 28 || got.Addr != 5 {
+		t.Fatalf("EmergencyStop = %+v want speed=1 steps=28 addr=5", got)
+	}
+}

@@ -53,6 +53,7 @@ func NewZ21Roco(netAddr string, netPort uint16) (*Z21Roco, error) {
 		stop:            make(chan struct{}),
 		metrics:         newZ21Metrics(),
 	}
+	roco.defaultSpeedSteps.Store(128)
 	if err := roco.dial(); err != nil {
 		return nil, err
 	}
@@ -117,6 +118,9 @@ type Z21Roco struct {
 	// lastSpeedSteps is the most recent SetSpeed steps (14/28/128), used by
 	// EmergencyStop so 14/28-step layouts are not forced to 128.
 	lastSpeedSteps atomic.Uint32
+	// defaultSpeedSteps is the command-station catalogue (daemon SpeedSteps)
+	// used by EmergencyStop before the first SetSpeed.
+	defaultSpeedSteps atomic.Uint32
 }
 
 // infoTimeout returns the read deadline used for loco-info queries.
@@ -937,9 +941,21 @@ func (z *Z21Roco) GetSpeed(addr LocoAddr) (uint8, bool, error) {
 func (z *Z21Roco) EmergencyStop(addr LocoAddr, forward bool) error {
 	steps := uint8(z.lastSpeedSteps.Load())
 	if steps != 14 && steps != 28 && steps != 128 {
+		steps = uint8(z.defaultSpeedSteps.Load())
+	}
+	if steps != 14 && steps != 28 && steps != 128 {
 		steps = 128
 	}
 	return z.SetSpeed(addr, 1, forward, steps)
+}
+
+// SetSpeedSteps records the command-station catalogue used by EmergencyStop
+// when no SetSpeed has run yet (BigFred daemon SpeedSteps).
+func (z *Z21Roco) SetSpeedSteps(steps uint8) {
+	if steps != 14 && steps != 28 && steps != 128 {
+		steps = 128
+	}
+	z.defaultSpeedSteps.Store(uint32(steps))
 }
 
 // encodeLocoDriveDB3 builds DB3 (RVVVVVVV) for LAN_X_SET_LOCO_DRIVE (§4.2).
