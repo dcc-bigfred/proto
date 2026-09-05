@@ -113,6 +113,10 @@ type Z21Roco struct {
 	// metrics holds lock-free hot-path counters. Always non-nil; bumping it is
 	// near-free and OTel-agnostic (see z21_metrics.go).
 	metrics *z21Metrics
+
+	// lastSpeedSteps is the most recent SetSpeed steps (14/28/128), used by
+	// EmergencyStop so 14/28-step layouts are not forced to 128.
+	lastSpeedSteps atomic.Uint32
 }
 
 // infoTimeout returns the read deadline used for loco-info queries.
@@ -889,6 +893,7 @@ func (z *Z21Roco) SetSpeed(addr LocoAddr, speed uint8, forward bool, speedSteps 
 	default:
 		return fmt.Errorf("invalid speed steps: %d (must be 14, 28, or 128)", speedSteps)
 	}
+	z.lastSpeedSteps.Store(uint32(speedSteps))
 
 	// Build and send the speed command
 	req := z.buildSetLocoSpeed(addr, speed, forward, speedStepsProto)
@@ -930,7 +935,11 @@ func (z *Z21Roco) GetSpeed(addr LocoAddr) (uint8, bool, error) {
 // EmergencyStop sends LAN_X_SET_LOCO_DRIVE with V=1 (per-loco e-stop).
 // Direction (R) is preserved. This is not LAN_X_SET_STOP (layout-wide halt).
 func (z *Z21Roco) EmergencyStop(addr LocoAddr, forward bool) error {
-	return z.SetSpeed(addr, 1, forward, 128)
+	steps := uint8(z.lastSpeedSteps.Load())
+	if steps != 14 && steps != 28 && steps != 128 {
+		steps = 128
+	}
+	return z.SetSpeed(addr, 1, forward, steps)
 }
 
 // encodeLocoDriveDB3 builds DB3 (RVVVVVVV) for LAN_X_SET_LOCO_DRIVE (§4.2).

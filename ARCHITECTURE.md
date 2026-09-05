@@ -111,7 +111,23 @@ func (s *Server) NotifyTrackPower(on bool)
 - `z21.Listen(bind, host)` — default `:21105`
 - `withrottle.Listen(bind, host)` — default `:12090`
 
-CV3/CV4 and function-key pairing stay in BigFred as a `DriveHost` wrapper.
+Optional type-assert gates let a consumer intercept protocol events **before**
+the default `DriveHost` call (pairing, roster, sentinel locos):
+
+- WiThrottle: `AcquireGate`, `ActionGate`, `ReleaseGate`, `TrackPowerGate`,
+  `Subscriber`, `SessionHooks`, `NHook`; `Listen` options
+  `WithHeartbeatSecs`, `WithDeadman`, `WithRosterProvider`, `WithLabelProvider`,
+  `WithServerName`, `WithReadTimeout`. Helpers: `ResendBurst`, `SendTo`,
+  `Disconnect`, `HoldersOf`, `NotifyLocoStateExcept`.
+- Z21: `DriveGate`, `CVGate`, `SessionHooks`; options `WithClientKeyFunc`
+  (IP stickiness), `WithSerial`, `WithPeerTTL(0)` to disable sweep.
+
+CV3/CV4 and function-key pairing stay in BigFred behind those gates.
+
+`commandstation.StubStation.EmergencyStop` is DCC speed 1 (e-stop).
+`Z21Roco.EmergencyStop` uses the last `SetSpeed` step count (14/28/128).
+`Open("lbserver://host")` defaults to port **5550**; BigFred's driver keeps
+**1234** for portless `lbserver://` rows.
 
 ## LocoNet gateway
 

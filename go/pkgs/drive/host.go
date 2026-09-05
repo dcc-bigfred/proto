@@ -32,3 +32,49 @@ type DriveHost interface {
 type FunctionModer interface {
 	Momentary(addr uint16, fn uint8) bool
 }
+
+// AcquireGate is consulted on WiThrottle M+ before the default acquire reply.
+// proceed=false skips Subscribe/LocoState; customReply is written as-is.
+// If customReply contains an M+ line, the server still records the loco so
+// later M A actions can be gated (sentinel pairing).
+type AcquireGate interface {
+	Acquire(client ClientID, addr uint16) (proceed bool, customReply []string)
+}
+
+// ActionGate is consulted on WiThrottle M A before SetSpeed/SetFunction.
+// handled=true skips the default drive call for that address.
+type ActionGate interface {
+	Action(client ClientID, throttleID byte, locoKey string, addr uint16, prop string) (handled bool)
+}
+
+// ReleaseGate is consulted on WiThrottle M- before host.Release.
+// GateRelease handled=true skips the default release line and host.Release.
+// Named GateRelease so a DriveHost adapter can implement both interfaces.
+type ReleaseGate interface {
+	GateRelease(client ClientID, throttleID byte, locoKey string, addr uint16) (handled bool)
+}
+
+// TrackPowerGate is consulted on client PPA. handled=true skips SetTrackPower
+// and the PPA broadcast (BigFred v1 ignores client track-power).
+type TrackPowerGate interface {
+	TrackPower(client ClientID, on bool) (handled bool)
+}
+
+// Subscriber is called after AcquireGate.Acquire(proceed=true), before LocoState.
+type Subscriber interface {
+	Subscribe(client ClientID, addr uint16) error
+}
+
+// SessionHooks observes WiThrottle TCP lifecycle. Servers type-assert the host.
+type SessionHooks interface {
+	OnConnect(client ClientID, deviceID string)
+	OnActivity(client ClientID)
+	OnQuit(client ClientID)
+	OnDisconnect(client ClientID)
+}
+
+// NHook is consulted on WiThrottle N<name>. consumed=true means the consumer
+// handled pairing and the server must not reply *<heartbeat>.
+type NHook interface {
+	OnN(client ClientID, name string) (consumed bool)
+}

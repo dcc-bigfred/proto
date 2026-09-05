@@ -156,6 +156,29 @@ func BuildCvNackSC() []byte {
 	return xbus([]byte{0x61, 0x12})
 }
 
+// BuildBCStopped is LAN_X_BC_STOPPED.
+func BuildBCStopped() []byte {
+	return xbus([]byte{0x81, 0x00})
+}
+
+// BuildProgrammingMode is LAN_X_BC_PROGRAMMING_MODE (61 02).
+func BuildProgrammingMode() []byte {
+	return xbus([]byte{0x61, 0x02})
+}
+
+// BuildRMBusDataChanged is an empty LAN_RMBUS_DATACHANGED for group.
+func BuildRMBusDataChanged(group byte) []byte {
+	data := make([]byte, 11)
+	data[0] = group
+	return BuildLAN(HeaderRMBusDataChanged, data)
+}
+
+// BuildLocoModeReply is LAN_GET_LOCOMODE with mode 0 (DCC).
+func BuildLocoModeReply(addr uint16) []byte {
+	data := []byte{byte(addr >> 8), byte(addr), 0}
+	return BuildLAN(HeaderGetLocoMode, data)
+}
+
 func cvWire(cv uint16) uint16 {
 	if cv == 0 {
 		return 0

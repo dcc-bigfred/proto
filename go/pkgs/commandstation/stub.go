@@ -31,9 +31,10 @@ func (s *StubStation) SetSpeed(addr LocoAddr, speed uint8, forward bool, speedSt
 }
 func (s *StubStation) GetSpeed(LocoAddr) (uint8, bool, error) { return 0, true, nil }
 
-// EmergencyStop has no wire spec on the stub; it is a normal stop (speed 0).
+// EmergencyStop is a DCC e-stop (speed 1) so dependents that type-assert
+// EmergencyStopper match the Station contract used by BigFred tests.
 func (s *StubStation) EmergencyStop(addr LocoAddr, forward bool) error {
-	return s.SetSpeed(addr, 0, forward, 128)
+	return s.SetSpeed(addr, 1, forward, 128)
 }
 
 func (s *StubStation) CleanUp() error { return nil }

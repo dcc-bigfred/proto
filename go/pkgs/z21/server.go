@@ -1,6 +1,7 @@
 package z21
 
 import (
+	"encoding/binary"
 	"net"
 	"sync"
 	"time"
@@ -13,18 +14,59 @@ const (
 	peerSweep = 10 * time.Second
 )
 
+type z21config struct {
+	keyFn  func(*net.UDPAddr) drive.ClientID
+	serial uint32
+	ttl    time.Duration
+}
+
+func defaultZ21Config() z21config {
+	return z21config{
+		keyFn:  func(a *net.UDPAddr) drive.ClientID { return drive.ClientID(a.String()) },
+		serial: 258_000_001,
+		ttl:    peerTTL,
+	}
+}
+
+// Option configures Listen.
+type Option func(*z21config)
+
+// WithClientKeyFunc keys peers (IP stickiness: IP-only vs ip:port).
+func WithClientKeyFunc(f func(*net.UDPAddr) drive.ClientID) Option {
+	return func(c *z21config) {
+		if f != nil {
+			c.keyFn = f
+		}
+	}
+}
+
+// WithSerial sets LAN_GET_SERIAL_NUMBER.
+func WithSerial(n uint32) Option {
+	return func(c *z21config) {
+		if n != 0 {
+			c.serial = n
+		}
+	}
+}
+
+// WithPeerTTL sets idle eviction. Zero disables the sweeper.
+func WithPeerTTL(d time.Duration) Option {
+	return func(c *z21config) { c.ttl = d }
+}
+
 // Server is an inbound Z21 LAN UDP listener.
 type Server struct {
-	host   drive.DriveHost
-	serial uint32
-	conn   *net.UDPConn
-	done   chan struct{}
+	host drive.DriveHost
+	cfg  z21config
+	conn *net.UDPConn
+	done chan struct{}
 
 	mu    sync.Mutex
-	peers map[string]*peer
+	peers map[drive.ClientID]*peer
 }
 
 type peer struct {
+	id       drive.ClientID
 	addr     *net.UDPAddr
 	flags    uint32
 	subs     map[uint16]struct{}
@@ -48,12 +90,18 @@ func (p *peer) wantsPower() bool {
 }
 
 // Listen binds UDP and serves packets until Close. bind may be ":0".
-func Listen(bind string, host drive.DriveHost) (*Server, error) {
+func Listen(bind string, host drive.DriveHost, opts ...Option) (*Server, error) {
 	if bind == "" {
 		bind = ":21105"
 	}
 	if host == nil {
 		host = nopHost{}
+	}
+	cfg := defaultZ21Config()
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&cfg)
+		}
 	}
 	addr, err := net.ResolveUDPAddr("udp", bind)
 	if err != nil {
@@ -64,14 +112,16 @@ func Listen(bind string, host drive.DriveHost) (*Server, error) {
 		return nil, err
 	}
 	s := &Server{
-		host:   host,
-		serial: 258_000_001,
-		conn:   conn,
-		done:   make(chan struct{}),
-		peers:  make(map[string]*peer),
+		host:  host,
+		cfg:   cfg,
+		conn:  conn,
+		done:  make(chan struct{}),
+		peers: make(map[drive.ClientID]*peer),
 	}
 	go s.readLoop()
-	go s.ttlLoop()
+	if cfg.ttl > 0 {
+		go s.ttlLoop()
+	}
 	return s, nil
 }
 
@@ -88,12 +138,65 @@ func (s *Server) Close() error {
 	return s.conn.Close()
 }
 
+func (s *Server) clientID(from *net.UDPAddr) drive.ClientID {
+	return s.cfg.keyFn(from)
+}
+
+// SendLocoInfo writes LAN_X_LOCO_INFO to one peer.
+func (s *Server) SendLocoInfo(client drive.ClientID, st drive.LocoState) {
+	s.mu.Lock()
+	p := s.peers[client]
+	s.mu.Unlock()
+	if p == nil {
+		return
+	}
+	_, _ = s.conn.WriteToUDP(BuildLocoInfo(st), p.addr)
+}
+
+// SendTo writes a raw LAN frame to one peer.
+func (s *Server) SendTo(client drive.ClientID, frame []byte) {
+	s.mu.Lock()
+	p := s.peers[client]
+	s.mu.Unlock()
+	if p == nil {
+		return
+	}
+	_, _ = s.conn.WriteToUDP(frame, p.addr)
+}
+
+// Disconnect drops a peer and Releases held locos.
+func (s *Server) Disconnect(client drive.ClientID) {
+	s.dropPeerID(client, false)
+}
+
+// BroadcastFlags returns the stored flags for client.
+func (s *Server) BroadcastFlags(client drive.ClientID) uint32 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if p := s.peers[client]; p != nil {
+		return p.flags
+	}
+	return 0
+}
+
 // NotifyLocoState pushes LAN_X_LOCO_INFO to peers whose broadcast flags match.
 func (s *Server) NotifyLocoState(st drive.LocoState) {
+	s.notifyLocoState(st, "")
+}
+
+// NotifyLocoStateExcept skips origin.
+func (s *Server) NotifyLocoStateExcept(st drive.LocoState, origin drive.ClientID) {
+	s.notifyLocoState(st, origin)
+}
+
+func (s *Server) notifyLocoState(st drive.LocoState, origin drive.ClientID) {
 	pkt := BuildLocoInfo(st)
 	s.mu.Lock()
 	targets := make([]*net.UDPAddr, 0, len(s.peers))
-	for _, p := range s.peers {
+	for id, p := range s.peers {
+		if origin != "" && id == origin {
+			continue
+		}
 		if p.wantsLoco(st.Addr) {
 			targets = append(targets, p.addr)
 		}
@@ -133,6 +236,9 @@ func (s *Server) readLoop() {
 		}
 		payload := append([]byte(nil), buf[:n]...)
 		s.notePeer(from)
+		if h, ok := s.host.(SessionHooks); ok {
+			h.OnActivity(s.clientID(from))
+		}
 		for _, pkt := range SplitDatagram(payload) {
 			s.handle(pkt, from)
 		}
@@ -153,7 +259,7 @@ func (s *Server) ttlLoop() {
 }
 
 func (s *Server) evictStale(now time.Time) {
-	cutoff := now.Add(-peerTTL)
+	cutoff := now.Add(-s.cfg.ttl)
 	type held struct {
 		id   drive.ClientID
 		addr uint16
@@ -164,9 +270,8 @@ func (s *Server) evictStale(now time.Time) {
 		if p.lastSeen.After(cutoff) {
 			continue
 		}
-		id := drive.ClientID(key)
 		for addr := range p.held {
-			release = append(release, held{id, addr})
+			release = append(release, held{key, addr})
 		}
 		delete(s.peers, key)
 	}
@@ -177,34 +282,39 @@ func (s *Server) evictStale(now time.Time) {
 }
 
 func (s *Server) notePeer(from *net.UDPAddr) *peer {
+	id := s.clientID(from)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	p, ok := s.peers[from.String()]
+	p, ok := s.peers[id]
 	if !ok {
 		p = &peer{
+			id:   id,
 			addr: from,
 			subs: make(map[uint16]struct{}),
 			held: make(map[uint16]struct{}),
 		}
-		s.peers[from.String()] = p
+		s.peers[id] = p
 	}
 	p.addr = from
 	p.lastSeen = time.Now()
 	return p
 }
 
-func (s *Server) markHeld(from *net.UDPAddr, addr uint16) {
+func (s *Server) markHeld(id drive.ClientID, addr uint16) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if p, ok := s.peers[from.String()]; ok {
+	if p, ok := s.peers[id]; ok {
 		p.held[addr] = struct{}{}
 	}
 }
 
 func (s *Server) dropPeer(from *net.UDPAddr) {
-	key := from.String()
+	s.dropPeerID(s.clientID(from), true)
+}
+
+func (s *Server) dropPeerID(id drive.ClientID, logoff bool) {
 	s.mu.Lock()
-	p, ok := s.peers[key]
+	p, ok := s.peers[id]
 	if !ok {
 		s.mu.Unlock()
 		return
@@ -213,34 +323,53 @@ func (s *Server) dropPeer(from *net.UDPAddr) {
 	for addr := range p.held {
 		held = append(held, addr)
 	}
-	delete(s.peers, key)
+	delete(s.peers, id)
 	s.mu.Unlock()
-	id := drive.ClientID(key)
+	if logoff {
+		if h, ok := s.host.(SessionHooks); ok {
+			h.OnLogoff(id)
+		}
+	}
 	for _, addr := range held {
 		s.host.Release(id, addr)
 	}
 }
 
+func (s *Server) gated(id drive.ClientID, op DriveOp, addr uint16, pkt []byte) bool {
+	g, ok := s.host.(DriveGate)
+	if !ok {
+		return false
+	}
+	return g.Drive(id, op, addr, pkt)
+}
+
 func (s *Server) handle(pkt []byte, from *net.UDPAddr) {
+	id := s.clientID(from)
 	if flags, ok := ParseSetBroadcastFlags(pkt); ok {
 		s.mu.Lock()
-		if p, ok := s.peers[from.String()]; ok {
+		if p, ok := s.peers[id]; ok {
 			p.flags = flags
 		}
 		s.mu.Unlock()
+		if h, ok := s.host.(SessionHooks); ok {
+			h.OnBroadcastFlags(id, flags)
+		}
+		if flags&BcSystemState != 0 {
+			_, _ = s.conn.WriteToUDP(buildSystemStateReply(), from)
+		}
 		return
 	}
 	if _, header, ok := PacketHeader(pkt); ok && header == HeaderGetBroadcastFlags {
 		s.mu.Lock()
 		var flags uint32
-		if p, ok := s.peers[from.String()]; ok {
+		if p, ok := s.peers[id]; ok {
 			flags = p.flags
 		}
 		s.mu.Unlock()
 		_, _ = s.conn.WriteToUDP(BuildBroadcastFlagsReply(flags), from)
 		return
 	}
-	if reply, ok := handshakeReply(pkt, s.serial); ok {
+	if reply, ok := handshakeReply(pkt, s.cfg.serial); ok {
 		_, _ = s.conn.WriteToUDP(reply, from)
 		return
 	}
@@ -248,15 +377,92 @@ func (s *Server) handle(pkt []byte, from *net.UDPAddr) {
 	if !ok {
 		return
 	}
-	if header == HeaderLogoff {
+	switch header {
+	case HeaderLogoff:
 		s.dropPeer(from)
+		return
+	case HeaderRMBusGetData:
+		group := byte(0)
+		if len(pkt) >= 5 {
+			group = pkt[4]
+		}
+		_, _ = s.conn.WriteToUDP(BuildRMBusDataChanged(group), from)
+		return
+	case HeaderGetLocoMode:
+		if len(pkt) >= 6 {
+			addr := binary.BigEndian.Uint16(pkt[4:6])
+			_, _ = s.conn.WriteToUDP(BuildLocoModeReply(addr), from)
+		}
+		return
+	case HeaderLocoNetFromLAN:
+		return
+	case HeaderLanKeepalive, HeaderLanSessionProbe:
+		_, _ = s.conn.WriteToUDP(buildStatusChangedReply(), from)
 		return
 	}
 	if header != HeaderXBus {
 		return
 	}
-	id := drive.ClientID(from.String())
+	if ParseSetStop(pkt) {
+		if s.gated(id, DriveSetStop, 0, pkt) {
+			return
+		}
+		s.mu.Lock()
+		var held []uint16
+		if p := s.peers[id]; p != nil {
+			for addr := range p.held {
+				held = append(held, addr)
+			}
+		}
+		s.mu.Unlock()
+		for _, addr := range held {
+			_ = s.host.SetSpeed(id, addr, 1, true, 128)
+		}
+		_, _ = s.conn.WriteToUDP(BuildBCStopped(), from)
+		return
+	}
+	if addr, ok := ParseSetLocoEStop(pkt); ok {
+		if s.gated(id, DriveLocoEStop, addr, pkt) {
+			return
+		}
+		_ = s.host.SetSpeed(id, addr, 1, true, 128)
+		s.markHeld(id, addr)
+		s.echoLoco(from, addr)
+		return
+	}
+	if addr, ok := ParsePurgeLoco(pkt); ok {
+		if s.gated(id, DrivePurge, addr, pkt) {
+			return
+		}
+		s.host.Release(id, addr)
+		s.mu.Lock()
+		if p := s.peers[id]; p != nil {
+			delete(p.held, addr)
+			delete(p.subs, addr)
+		}
+		s.mu.Unlock()
+		return
+	}
+	if addr, cvWire, value, ok := ParsePomWriteByte(pkt); ok {
+		s.handleCV(id, from, CVPomWrite, addr, cvWire, value)
+		return
+	}
+	if addr, cvWire, ok := ParsePomReadByte(pkt); ok {
+		s.handleCV(id, from, CVPomRead, addr, cvWire, 0)
+		return
+	}
+	if cvWire, value, ok := ParseProgWrite(pkt); ok {
+		s.handleCV(id, from, CVProgWrite, 0, cvWire, value)
+		return
+	}
+	if cvWire, ok := ParseProgRead(pkt); ok {
+		s.handleCV(id, from, CVProgRead, 0, cvWire, 0)
+		return
+	}
 	if addr, speed, forward, ok := ParseSetLocoDrive(pkt); ok {
+		if s.gated(id, DriveSetSpeed, addr, pkt) {
+			return
+		}
 		steps := uint8(128)
 		if len(pkt) > 5 {
 			switch pkt[5] & 0x0F {
@@ -267,11 +473,14 @@ func (s *Server) handle(pkt []byte, from *net.UDPAddr) {
 			}
 		}
 		_ = s.host.SetSpeed(id, addr, speed, forward, steps)
-		s.markHeld(from, addr)
+		s.markHeld(id, addr)
 		s.echoLoco(from, addr)
 		return
 	}
 	if addr, fn, on, toggle, ok := ParseSetLocoFunction(pkt); ok {
+		if s.gated(id, DriveSetFunction, addr, pkt) {
+			return
+		}
 		if toggle {
 			st, err := s.host.LocoState(addr)
 			if err == nil {
@@ -279,11 +488,14 @@ func (s *Server) handle(pkt []byte, from *net.UDPAddr) {
 			}
 		}
 		_ = s.host.SetFunction(id, addr, uint8(fn), on)
-		s.markHeld(from, addr)
+		s.markHeld(id, addr)
 		s.echoLoco(from, addr)
 		return
 	}
 	if addr, lo, hi, bits, ok := ParseSetLocoFunctionGroup(pkt); ok {
+		if s.gated(id, DriveSetFunctionGroup, addr, pkt) {
+			return
+		}
 		var cur uint32
 		if st, err := s.host.LocoState(addr); err == nil {
 			cur = st.Functions
@@ -295,13 +507,16 @@ func (s *Server) handle(pkt []byte, from *net.UDPAddr) {
 				_ = s.host.SetFunction(id, addr, fn, want)
 			}
 		}
-		s.markHeld(from, addr)
+		s.markHeld(id, addr)
 		s.echoLoco(from, addr)
 		return
 	}
 	if addr, ok := ParseGetLocoInfo(pkt); ok {
+		if s.gated(id, DriveGetLocoInfo, addr, pkt) {
+			return
+		}
 		s.mu.Lock()
-		if p, ok := s.peers[from.String()]; ok {
+		if p, ok := s.peers[id]; ok {
 			p.subs[addr] = struct{}{}
 		}
 		s.mu.Unlock()
@@ -309,15 +524,31 @@ func (s *Server) handle(pkt []byte, from *net.UDPAddr) {
 		return
 	}
 	if on, ok := ParseTrackPower(pkt); ok {
+		if s.gated(id, DriveTrackPower, 0, pkt) {
+			return
+		}
 		_ = s.host.SetTrackPower(id, on)
 		s.NotifyTrackPower(on)
 	}
 }
 
+func (s *Server) handleCV(id drive.ClientID, from *net.UDPAddr, op CVOp, addr uint16, cvWire uint16, value uint8) {
+	if g, ok := s.host.(CVGate); ok {
+		handled, reply := g.CV(id, op, addr, cvWire, value)
+		if handled {
+			if len(reply) > 0 {
+				_, _ = s.conn.WriteToUDP(reply, from)
+			}
+			return
+		}
+	}
+	_, _ = s.conn.WriteToUDP(BuildCvNack(), from)
+}
+
 func (s *Server) echoLoco(from *net.UDPAddr, addr uint16) {
 	st, err := s.host.LocoState(addr)
 	if err != nil {
-		st = drive.LocoState{Addr: addr, Steps: 128}
+		return
 	}
 	if st.Addr == 0 {
 		st.Addr = addr
