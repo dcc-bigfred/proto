@@ -14,6 +14,7 @@ type config struct {
 	roster        RosterProvider
 	labels        LabelProvider
 	trackOn       bool
+	onError       func(error)
 }
 
 func defaultConfig() config {
@@ -70,6 +71,11 @@ func WithLabelProvider(lp LabelProvider) ServerOption {
 // WithTrackOn sets the initial PPA state advertised in the burst.
 func WithTrackOn(on bool) ServerOption {
 	return func(c *config) { c.trackOn = on }
+}
+
+// WithErrorHandler is invoked on accept/loop errors that are not shutdown.
+func WithErrorHandler(h func(error)) ServerOption {
+	return func(c *config) { c.onError = h }
 }
 
 // RosterProvider returns the roster the server should advertise to a client.

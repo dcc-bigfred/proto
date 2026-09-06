@@ -20,9 +20,19 @@ func (h *z21GateHost) Drive(drive.ClientID, DriveOp, uint16, []byte) bool { retu
 func (h *z21GateHost) CV(drive.ClientID, CVOp, uint16, uint16, uint8) (bool, []byte) {
 	return h.cvHandled, h.cvReply
 }
-func (h *z21GateHost) OnActivity(drive.ClientID)              {}
-func (h *z21GateHost) OnLogoff(drive.ClientID)                { h.logoffs++ }
+func (h *z21GateHost) OnActivity(drive.ClientID) {}
+func (h *z21GateHost) OnLogoff(drive.ClientID) {
+	h.mu.Lock()
+	h.logoffs++
+	h.mu.Unlock()
+}
 func (h *z21GateHost) OnBroadcastFlags(drive.ClientID, uint32) {}
+
+func (h *z21GateHost) logoffCount() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.logoffs
+}
 
 func TestDriveGateSkipsSetSpeed(t *testing.T) {
 	h := &z21GateHost{driveHandled: true}
@@ -40,8 +50,8 @@ func TestDriveGateSkipsSetSpeed(t *testing.T) {
 		t.Fatal(err)
 	}
 	time.Sleep(50 * time.Millisecond)
-	if len(h.speeds) != 0 {
-		t.Fatalf("SetSpeed should be skipped, got %+v", h.speeds)
+	if len(h.snapshotSpeeds()) != 0 {
+		t.Fatalf("SetSpeed should be skipped, got %+v", h.snapshotSpeeds())
 	}
 }
 
@@ -95,7 +105,7 @@ func TestLogoffCallsHook(t *testing.T) {
 	}
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {
-		if h.logoffs >= 1 {
+		if h.logoffCount() >= 1 {
 			return
 		}
 		time.Sleep(10 * time.Millisecond)

@@ -2,7 +2,9 @@ package z21
 
 import (
 	"encoding/binary"
+	"errors"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
@@ -10,8 +12,11 @@ import (
 )
 
 const (
-	peerTTL   = 60 * time.Second
-	peerSweep = 10 * time.Second
+	peerTTL       = 60 * time.Second
+	peerSweep     = 10 * time.Second
+	readDeadline  = 1 * time.Second
+	loopBackoff   = 50 * time.Millisecond
+	maxLoopErrors = 32
 )
 
 type z21config struct {
@@ -19,6 +24,7 @@ type z21config struct {
 	serial   uint32
 	ttl      time.Duration
 	sysState []byte
+	onError  func(error)
 }
 
 func defaultZ21Config() z21config {
@@ -65,14 +71,20 @@ func WithSystemStatePayload(data []byte) Option {
 	}
 }
 
+// WithErrorHandler is invoked on read-loop errors that are not shutdown.
+func WithErrorHandler(h func(error)) Option {
+	return func(c *z21config) { c.onError = h }
+}
+
 // Server is an inbound Z21 LAN UDP listener.
 type Server struct {
-	host     drive.DriveHost
-	cfg      z21config
-	conn     *net.UDPConn
-	done     chan struct{}
-	dispatch *dispatcher
-	loops    sync.WaitGroup
+	host      drive.DriveHost
+	cfg       z21config
+	conn      *net.UDPConn
+	done      chan struct{}
+	dispatch  *dispatcher
+	loops     sync.WaitGroup
+	closeOnce sync.Once
 
 	mu    sync.Mutex
 	peers map[drive.ClientID]*peer
@@ -152,14 +164,13 @@ func (s *Server) Addr() net.Addr { return s.conn.LocalAddr() }
 
 // Close stops the listener.
 func (s *Server) Close() error {
-	select {
-	case <-s.done:
-	default:
+	var err error
+	s.closeOnce.Do(func() {
 		close(s.done)
-	}
-	err := s.conn.Close()
-	s.loops.Wait()
-	s.dispatch.close()
+		err = s.conn.Close()
+		s.loops.Wait()
+		s.dispatch.close()
+	})
 	return err
 }
 
@@ -171,22 +182,30 @@ func (s *Server) clientID(from *net.UDPAddr) drive.ClientID {
 func (s *Server) SendLocoInfo(client drive.ClientID, st drive.LocoState) {
 	s.mu.Lock()
 	p := s.peers[client]
+	var addr *net.UDPAddr
+	if p != nil {
+		addr = cloneUDPAddr(p.addr)
+	}
 	s.mu.Unlock()
-	if p == nil {
+	if addr == nil {
 		return
 	}
-	_, _ = s.conn.WriteToUDP(BuildLocoInfo(st), p.addr)
+	_, _ = s.conn.WriteToUDP(BuildLocoInfo(st), addr)
 }
 
 // SendTo writes a raw LAN frame to one peer.
 func (s *Server) SendTo(client drive.ClientID, frame []byte) {
 	s.mu.Lock()
 	p := s.peers[client]
+	var addr *net.UDPAddr
+	if p != nil {
+		addr = cloneUDPAddr(p.addr)
+	}
 	s.mu.Unlock()
-	if p == nil {
+	if addr == nil {
 		return
 	}
-	_, _ = s.conn.WriteToUDP(frame, p.addr)
+	_, _ = s.conn.WriteToUDP(frame, addr)
 }
 
 // Disconnect drops a peer and Releases held locos.
@@ -254,11 +273,38 @@ func (s *Server) NotifyTrackPower(on bool) {
 
 func (s *Server) readLoop() {
 	buf := make([]byte, 2048)
+	consecutive := 0
 	for {
+		select {
+		case <-s.done:
+			return
+		default:
+		}
+		_ = s.conn.SetReadDeadline(time.Now().Add(readDeadline))
 		n, from, err := s.conn.ReadFromUDP(buf)
 		if err != nil {
-			return
+			if isClosedNetErr(err) {
+				return
+			}
+			select {
+			case <-s.done:
+				return
+			default:
+			}
+			var netErr net.Error
+			if errors.As(err, &netErr) && netErr.Timeout() {
+				consecutive = 0
+				continue
+			}
+			s.reportError(err)
+			consecutive++
+			if consecutive >= maxLoopErrors {
+				return
+			}
+			time.Sleep(loopBackoff)
+			continue
 		}
+		consecutive = 0
 		payload := append([]byte(nil), buf[:n]...)
 		fromCopy := cloneUDPAddr(from)
 		id := s.clientID(fromCopy)
@@ -266,6 +312,23 @@ func (s *Server) readLoop() {
 			s.serveDatagram(payload, fromCopy)
 		})
 	}
+}
+
+func (s *Server) reportError(err error) {
+	if s.cfg.onError != nil {
+		s.cfg.onError(err)
+	}
+}
+
+func isClosedNetErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, net.ErrClosed) {
+		return true
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "closed network connection") || strings.Contains(msg, "use of closed")
 }
 
 func (s *Server) serveDatagram(payload []byte, from *net.UDPAddr) {

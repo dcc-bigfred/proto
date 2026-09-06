@@ -462,3 +462,98 @@ func TestQuitCallsOnQuit(t *testing.T) {
 	}
 	t.Fatal("OnQuit not called")
 }
+
+type hbHookHost struct {
+	recHost
+	mu  sync.Mutex
+	ids []drive.ClientID
+	on  []bool
+}
+
+func (h *hbHookHost) OnHeartbeatMonitor(id drive.ClientID, on bool) {
+	h.mu.Lock()
+	h.ids = append(h.ids, id)
+	h.on = append(h.on, on)
+	h.mu.Unlock()
+}
+
+func TestHeartbeatHookStarPlusMinus(t *testing.T) {
+	h := &hbHookHost{}
+	srv, err := Listen("127.0.0.1:0", h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = srv.Close() })
+	conn, _ := wtDialHU(t, srv, "hb")
+	fmt.Fprintln(conn, "*+")
+	fmt.Fprintln(conn, "*-")
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		h.mu.Lock()
+		n := len(h.on)
+		on := append([]bool(nil), h.on...)
+		ids := append([]drive.ClientID(nil), h.ids...)
+		h.mu.Unlock()
+		if n >= 2 {
+			if !on[0] || on[1] {
+				t.Fatalf("OnHeartbeatMonitor on=%v want true,false", on[:2])
+			}
+			if ids[0] != "withrottle:hb" || ids[1] != "withrottle:hb" {
+				t.Fatalf("ids=%v", ids[:2])
+			}
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("OnHeartbeatMonitor not called")
+}
+
+func TestReleaseStarKeepsOtherThrottleLocos(t *testing.T) {
+	h := &actionStarHost{}
+	srv, err := Listen("127.0.0.1:0", h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = srv.Close() })
+	conn, r := wtDialHU(t, srv, "mt")
+	fmt.Fprintln(conn, "M1+L128<;>L128")
+	drainUntil(t, r, func(line string) bool {
+		return strings.HasPrefix(line, "M1+L128") || strings.HasPrefix(line, "M1AL128")
+	})
+	fmt.Fprintln(conn, "M0-*<;>")
+	drainUntil(t, r, func(line string) bool { return line == "M0-*<;>r" })
+	if holders := srv.HoldersOf(3); len(holders) != 0 {
+		t.Fatalf("M0 loco 3 still held: %v", holders)
+	}
+	if holders := srv.HoldersOf(128); len(holders) != 1 || holders[0] != "withrottle:mt" {
+		t.Fatalf("M1 loco 128 holders=%v", holders)
+	}
+	fmt.Fprintln(conn, "M1A*<;>V50")
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		h.mu.Lock()
+		calls := append([]string(nil), h.calls...)
+		h.mu.Unlock()
+		if len(calls) >= 1 {
+			if calls[0] != "*/128/V50" {
+				t.Fatalf("Action = %v, want */128/V50", calls)
+			}
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("M1A* did not reach ActionGate")
+}
+
+func TestCloseIsIdempotent(t *testing.T) {
+	srv, err := Listen("127.0.0.1:0", &recHost{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.Close(); err != nil {
+		t.Fatalf("second Close: %v", err)
+	}
+}

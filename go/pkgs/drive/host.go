@@ -78,3 +78,9 @@ type SessionHooks interface {
 type NHook interface {
 	OnN(client ClientID, name string) (consumed bool)
 }
+
+// HeartbeatHook observes WiThrottle *+ / *- so the consumer can run its own
+// dead-man. Optional; servers type-assert the host.
+type HeartbeatHook interface {
+	OnHeartbeatMonitor(client ClientID, on bool)
+}

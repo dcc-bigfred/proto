@@ -3,6 +3,7 @@ package z21
 import (
 	"encoding/binary"
 	"net"
+	"sync"
 	"testing"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 )
 
 type recHost struct {
+	mu     sync.Mutex
 	speeds []drive.LocoState
 	fns    []struct {
 		addr uint16
@@ -24,6 +26,8 @@ type recHost struct {
 }
 
 func (h *recHost) SetSpeed(_ drive.ClientID, addr uint16, speed uint8, forward bool, steps uint8) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	st := drive.LocoState{Addr: addr, Speed: speed, Forward: forward, Steps: steps}
 	if h.locos == nil {
 		h.locos = map[uint16]drive.LocoState{}
@@ -35,6 +39,8 @@ func (h *recHost) SetSpeed(_ drive.ClientID, addr uint16, speed uint8, forward b
 	return nil
 }
 func (h *recHost) SetFunction(_ drive.ClientID, addr uint16, fn uint8, on bool) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	h.fns = append(h.fns, struct {
 		addr uint16
 		fn   uint8
@@ -54,6 +60,8 @@ func (h *recHost) SetFunction(_ drive.ClientID, addr uint16, fn uint8, on bool) 
 	return nil
 }
 func (h *recHost) LocoState(addr uint16) (drive.LocoState, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	if h.locos != nil {
 		if st, ok := h.locos[addr]; ok {
 			if st.Steps == 0 {
@@ -66,10 +74,44 @@ func (h *recHost) LocoState(addr uint16) (drive.LocoState, error) {
 }
 func (h *recHost) SetTrackPower(drive.ClientID, bool) error { return nil }
 func (h *recHost) Release(id drive.ClientID, addr uint16) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	h.released = append(h.released, struct {
 		id   drive.ClientID
 		addr uint16
 	}{id, addr})
+}
+
+func (h *recHost) snapshotSpeeds() []drive.LocoState {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return append([]drive.LocoState(nil), h.speeds...)
+}
+
+func (h *recHost) snapshotFns() []struct {
+	addr uint16
+	fn   uint8
+	on   bool
+} {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return append([]struct {
+		addr uint16
+		fn   uint8
+		on   bool
+	}(nil), h.fns...)
+}
+
+func (h *recHost) snapshotReleased() []struct {
+	id   drive.ClientID
+	addr uint16
+} {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return append([]struct {
+		id   drive.ClientID
+		addr uint16
+	}(nil), h.released...)
 }
 
 func TestListenDriveAndFunction(t *testing.T) {
@@ -111,8 +153,9 @@ func TestListenDriveAndFunction(t *testing.T) {
 	if !ok || info.Addr != 3 || info.Speed != 50 || !info.Forward {
 		t.Fatalf("loco info after drive: %+v ok=%v pkt=% X", info, ok, buf[:n])
 	}
-	if len(host.speeds) != 1 || host.speeds[0].Addr != 3 || host.speeds[0].Speed != 50 {
-		t.Fatalf("host speeds = %+v", host.speeds)
+	speeds := host.snapshotSpeeds()
+	if len(speeds) != 1 || speeds[0].Addr != 3 || speeds[0].Speed != 50 {
+		t.Fatalf("host speeds = %+v", speeds)
 	}
 
 	if _, err := conn.Write(BuildSetLocoFunction(3, 0, true)); err != nil {
@@ -126,8 +169,9 @@ func TestListenDriveAndFunction(t *testing.T) {
 	if !ok || info.Functions&1 == 0 {
 		t.Fatalf("expected F0 on, info=%+v pkt=% X", info, buf[:n])
 	}
-	if len(host.fns) != 1 || host.fns[0].fn != 0 || !host.fns[0].on {
-		t.Fatalf("host fns = %+v", host.fns)
+	fns := host.snapshotFns()
+	if len(fns) != 1 || fns[0].fn != 0 || !fns[0].on {
+		t.Fatalf("host fns = %+v", fns)
 	}
 }
 
@@ -206,11 +250,20 @@ func TestFunctionGroupAndBroadcastFlags(t *testing.T) {
 		t.Fatal(err)
 	}
 	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) && len(host.fns) < 2 {
+	var fns []struct {
+		addr uint16
+		fn   uint8
+		on   bool
+	}
+	for time.Now().Before(deadline) {
+		fns = host.snapshotFns()
+		if len(fns) >= 2 {
+			break
+		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	if len(host.fns) != 2 {
-		t.Fatalf("group fns = %+v", host.fns)
+	if len(fns) != 2 {
+		t.Fatalf("group fns = %+v", fns)
 	}
 
 	got := make(chan LocoInfo, 1)
@@ -272,11 +325,19 @@ func TestPeerLogoffReleasesHeld(t *testing.T) {
 		t.Fatal(err)
 	}
 	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) && len(host.released) == 0 {
+	var released []struct {
+		id   drive.ClientID
+		addr uint16
+	}
+	for time.Now().Before(deadline) {
+		released = host.snapshotReleased()
+		if len(released) > 0 {
+			break
+		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	if len(host.released) != 1 || host.released[0].addr != 3 {
-		t.Fatalf("released = %+v", host.released)
+	if len(released) != 1 || released[0].addr != 3 {
+		t.Fatalf("released = %+v", released)
 	}
 }
 
@@ -301,8 +362,9 @@ func TestEvictStale(t *testing.T) {
 		t.Fatal(err)
 	}
 	srv.evictStale(time.Now().Add(peerTTL + time.Second))
-	if len(host.released) != 1 || host.released[0].addr != 7 {
-		t.Fatalf("evict released = %+v", host.released)
+	released := host.snapshotReleased()
+	if len(released) != 1 || released[0].addr != 7 {
+		t.Fatalf("evict released = %+v", released)
 	}
 }
 
@@ -436,4 +498,17 @@ func distinctShardKeys(t *testing.T) (slow, fast string) {
 	}
 	t.Fatal("could not pick distinct shards")
 	return "", ""
+}
+
+func TestCloseIsIdempotent(t *testing.T) {
+	srv, err := Listen("127.0.0.1:0", &recHost{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.Close(); err != nil {
+		t.Fatalf("second Close: %v", err)
+	}
 }

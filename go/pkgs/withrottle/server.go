@@ -2,6 +2,7 @@ package withrottle
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"net"
 	"strings"
@@ -22,6 +23,8 @@ const (
 	rosterEmpty   = "RL0"
 	protocolVer   = "VN2.0"
 	writeTimeout  = 5 * time.Second
+	loopBackoff   = 50 * time.Millisecond
+	maxLoopErrors = 32
 )
 
 // Server is an inbound WiThrottle TCP listener.
@@ -31,7 +34,12 @@ type Server struct {
 	ln   net.Listener
 	done chan struct{}
 
+	closeOnce sync.Once
+	loops     sync.WaitGroup
+	sessWg    sync.WaitGroup
+
 	mu      sync.Mutex
+	closed  bool
 	conns   map[net.Conn]*session
 	byID    map[drive.ClientID]*session
 	trackOn bool
@@ -45,7 +53,7 @@ type session struct {
 	device    string
 	name      string
 	throttle  byte
-	locos     map[uint16]struct{}
+	locos     map[byte]map[uint16]struct{} // per MultiThrottle id (M0/M1/…)
 	forward   map[uint16]bool
 	speed     map[uint16]uint8
 	fnBits    map[uint16]uint32
@@ -84,9 +92,17 @@ func Listen(bind string, host drive.DriveHost, opts ...ServerOption) (*Server, e
 		byID:    make(map[drive.ClientID]*session),
 		trackOn: cfg.trackOn,
 	}
-	go s.acceptLoop()
+	s.loops.Add(1)
+	go func() {
+		defer s.loops.Done()
+		s.acceptLoop()
+	}()
 	if cfg.deadman {
-		go s.hbLoop()
+		s.loops.Add(1)
+		go func() {
+			defer s.loops.Done()
+			s.hbLoop()
+		}()
 	}
 	return s, nil
 }
@@ -96,21 +112,25 @@ func (s *Server) Addr() net.Addr { return s.ln.Addr() }
 
 // Close stops the listener and connected sessions.
 func (s *Server) Close() error {
-	select {
-	case <-s.done:
-	default:
+	var err error
+	s.closeOnce.Do(func() {
+		s.mu.Lock()
+		s.closed = true
+		s.mu.Unlock()
 		close(s.done)
-	}
-	err := s.ln.Close()
-	s.mu.Lock()
-	conns := make([]net.Conn, 0, len(s.conns))
-	for c := range s.conns {
-		conns = append(conns, c)
-	}
-	s.mu.Unlock()
-	for _, c := range conns {
-		_ = c.Close()
-	}
+		err = s.ln.Close()
+		s.mu.Lock()
+		conns := make([]net.Conn, 0, len(s.conns))
+		for c := range s.conns {
+			conns = append(conns, c)
+		}
+		s.mu.Unlock()
+		for _, c := range conns {
+			_ = c.Close()
+		}
+		s.sessWg.Wait()
+		s.loops.Wait()
+	})
 	return err
 }
 
@@ -151,7 +171,7 @@ func (s *Server) HoldersOf(addr uint16) []drive.ClientID {
 	defer s.mu.Unlock()
 	out := make([]drive.ClientID, 0)
 	for _, sess := range s.conns {
-		if _, ok := sess.locos[addr]; ok {
+		if sessionHoldsAddr(sess.locos, addr) {
 			out = append(out, sess.id)
 		}
 	}
@@ -200,23 +220,16 @@ func (s *Server) notifyLocoState(st drive.LocoState, origin drive.ClientID) {
 		if origin != "" && sess.id == origin {
 			continue
 		}
-		if _, ok := sess.locos[st.Addr]; !ok {
+		tid, ok := throttleHolding(sess.locos, sess.throttle, st.Addr)
+		if !ok {
 			continue
-		}
-		tid := sess.throttle
-		if tid == 0 {
-			tid = '0'
 		}
 		jobs = append(jobs, job{sess: sess, lines: buildNotify(tid, st.Addr, view)})
 	}
 	s.mu.Unlock()
 	for _, j := range jobs {
 		j := j
-		go func() {
-			for _, line := range j.lines {
-				j.sess.write(line)
-			}
-		}()
+		go j.sess.writeAll(j.lines...)
 	}
 }
 
@@ -240,22 +253,35 @@ func (s *Server) NotifyTrackPower(on bool) {
 }
 
 func (s *Server) acceptLoop() {
+	consecutive := 0
 	for {
 		conn, err := s.ln.Accept()
 		if err != nil {
-			return
+			if s.isClosed() || isClosedNetErr(err) {
+				return
+			}
+			s.reportError(err)
+			consecutive++
+			if consecutive >= maxLoopErrors {
+				return
+			}
+			time.Sleep(loopBackoff)
+			continue
 		}
+		consecutive = 0
+		s.sessWg.Add(1)
 		go s.serve(conn)
 	}
 }
 
 func (s *Server) serve(conn net.Conn) {
+	defer s.sessWg.Done()
 	defer conn.Close()
 	sess := &session{
 		conn:      conn,
 		id:        drive.ClientID(conn.RemoteAddr().String()),
 		throttle:  '0',
-		locos:     map[uint16]struct{}{},
+		locos:     map[byte]map[uint16]struct{}{},
 		forward:   map[uint16]bool{},
 		speed:     map[uint16]uint8{},
 		fnBits:    map[uint16]uint32{},
@@ -263,6 +289,10 @@ func (s *Server) serve(conn net.Conn) {
 	}
 	sess.touch()
 	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return
+	}
 	s.conns[conn] = sess
 	s.byID[sess.id] = sess
 	s.mu.Unlock()
@@ -328,10 +358,7 @@ func (s *Server) enforceHeartbeat() {
 
 func (s *Server) deadman(sess *session) {
 	s.mu.Lock()
-	locos := make([]uint16, 0, len(sess.locos))
-	for addr := range sess.locos {
-		locos = append(locos, addr)
-	}
+	locos := allSessionLocos(sess.locos)
 	id := sess.id
 	forward := make(map[uint16]bool, len(sess.forward))
 	for k, v := range sess.forward {
@@ -358,10 +385,7 @@ func (s *Server) drop(sess *session) {
 	if !replaced {
 		delete(s.byID, sess.id)
 	}
-	locos := make([]uint16, 0, len(sess.locos))
-	for addr := range sess.locos {
-		locos = append(locos, addr)
-	}
+	locos := allSessionLocos(sess.locos)
 	id := sess.id
 	s.mu.Unlock()
 	if replaced {
@@ -379,9 +403,10 @@ func (s *Server) handle(sess *session, line string) {
 	if line == "" {
 		return
 	}
+	id := s.sessID(sess)
 	if sess.device != "" {
 		if h, ok := s.host.(drive.SessionHooks); ok {
-			h.OnActivity(sess.id)
+			h.OnActivity(id)
 		}
 	}
 	switch {
@@ -391,21 +416,27 @@ func (s *Server) handle(sess *session, line string) {
 		s.handleN(sess, strings.TrimSpace(line[1:]))
 	case line == "Q":
 		if h, ok := s.host.(drive.SessionHooks); ok {
-			h.OnQuit(sess.id)
+			h.OnQuit(id)
 		}
 		_ = sess.conn.Close()
 	case line == "*":
 		return
 	case line == "*+":
 		sess.hbOn.Store(true)
+		if h, ok := s.host.(drive.HeartbeatHook); ok {
+			h.OnHeartbeatMonitor(id, true)
+		}
 	case line == "*-":
 		sess.hbOn.Store(false)
+		if h, ok := s.host.(drive.HeartbeatHook); ok {
+			h.OnHeartbeatMonitor(id, false)
+		}
 	case strings.HasPrefix(line, "PPA"):
 		on := len(line) > 3 && line[3] != '0'
-		if g, ok := s.host.(drive.TrackPowerGate); ok && g.TrackPower(sess.id, on) {
+		if g, ok := s.host.(drive.TrackPowerGate); ok && g.TrackPower(id, on) {
 			return
 		}
-		_ = s.host.SetTrackPower(sess.id, on)
+		_ = s.host.SetTrackPower(id, on)
 		s.NotifyTrackPower(on)
 	case strings.HasPrefix(line, "M"):
 		s.handleM(sess, line)
@@ -413,22 +444,23 @@ func (s *Server) handle(sess *session, line string) {
 }
 
 func (s *Server) handleHU(sess *session, device string) {
+	s.mu.Lock()
 	sess.device = device
 	oldID := sess.id
 	if device != "" {
 		sess.id = drive.ClientID("withrottle:" + device)
 	}
-	s.mu.Lock()
-	if oldID != sess.id {
+	newID := sess.id
+	if oldID != newID {
 		if s.byID[oldID] == sess {
 			delete(s.byID, oldID)
 		}
 	}
 	var prev *session
-	if p, ok := s.byID[sess.id]; ok && p != sess {
+	if p, ok := s.byID[newID]; ok && p != sess {
 		prev = p
 	}
-	s.byID[sess.id] = sess
+	s.byID[newID] = sess
 	s.mu.Unlock()
 	if prev != nil {
 		_ = prev.conn.Close()
@@ -436,10 +468,10 @@ func (s *Server) handleHU(sess *session, device string) {
 	// A repeated HU with the same device on the same TCP session is not a
 	// new connection; consumers treat OnConnect for an already known client
 	// as a takeover and reset per-connection state.
-	if oldID != sess.id || !sess.connected {
+	if oldID != newID || !sess.connected {
 		sess.connected = true
 		if h, ok := s.host.(drive.SessionHooks); ok {
-			h.OnConnect(sess.id, device)
+			h.OnConnect(newID, device)
 		}
 	}
 	if !sess.burstSent {
@@ -450,8 +482,9 @@ func (s *Server) handleHU(sess *session, device string) {
 
 func (s *Server) handleN(sess *session, name string) {
 	sess.name = name
+	id := s.sessID(sess)
 	if h, ok := s.host.(drive.NHook); ok {
-		if h.OnN(sess.id, name) {
+		if h.OnN(id, name) {
 			return
 		}
 	}
@@ -479,7 +512,7 @@ func (s *Server) sendBurst(sess *session) {
 		protocolVer,
 		s.heartbeatLine(),
 		ppa,
-		s.rosterLine(sess.id),
+		s.rosterLine(s.sessID(sess)),
 		"HT" + s.cfg.serverName,
 	} {
 		sess.write(line)
@@ -491,7 +524,10 @@ func (s *Server) handleM(sess *session, line string) {
 	if !ok {
 		return
 	}
+	s.mu.Lock()
 	sess.throttle = cmd.ThrottleID
+	id := sess.id
+	s.mu.Unlock()
 	switch cmd.Op {
 	case MOpAdd:
 		addr, ok := parseAcquireAddr(cmd.LocoKey, cmd.Properties)
@@ -502,12 +538,12 @@ func (s *Server) handleM(sess *session, line string) {
 		proceed := true
 		var custom []string
 		if g, ok := s.host.(drive.AcquireGate); ok {
-			proceed, custom = g.Acquire(sess.id, cmd.ThrottleID, addr)
+			proceed, custom = g.Acquire(id, cmd.ThrottleID, addr)
 		}
 		hold := proceed || acquireHolds(custom)
 		if hold {
 			s.mu.Lock()
-			sess.locos[addr] = struct{}{}
+			holdLoco(sess.locos, cmd.ThrottleID, addr)
 			s.mu.Unlock()
 		}
 		if !proceed {
@@ -534,15 +570,15 @@ func (s *Server) handleM(sess *session, line string) {
 				sess.write(l)
 			}
 			if s.cfg.labels != nil {
-				if line := FormatLabelLine(cmd.ThrottleID, LocoKey(addr), s.cfg.labels.Labels(sess.id, addr)); line != "" {
+				if line := FormatLabelLine(cmd.ThrottleID, LocoKey(addr), s.cfg.labels.Labels(id, addr)); line != "" {
 					sess.write(line)
 				}
 			}
 		}
 		if sub, ok := s.host.(drive.Subscriber); ok {
-			if err := sub.Subscribe(sess.id, addr); err != nil {
+			if err := sub.Subscribe(id, addr); err != nil {
 				s.mu.Lock()
-				delete(sess.locos, addr)
+				unholdLoco(sess.locos, cmd.ThrottleID, addr)
 				s.mu.Unlock()
 				sess.write(buildReleaseLine(cmd.ThrottleID, LocoKey(addr)))
 				if err.Error() != "" {
@@ -588,7 +624,7 @@ func (s *Server) handleLabels(sess *session, cmd MCommand) {
 	if !ok || s.cfg.labels == nil {
 		return
 	}
-	line := FormatLabelLine(cmd.ThrottleID, cmd.LocoKey, s.cfg.labels.Labels(sess.id, addr))
+	line := FormatLabelLine(cmd.ThrottleID, cmd.LocoKey, s.cfg.labels.Labels(s.sessID(sess), addr))
 	if line != "" {
 		sess.write(line)
 	}
@@ -596,37 +632,39 @@ func (s *Server) handleLabels(sess *session, cmd MCommand) {
 
 func (s *Server) handleRemove(sess *session, cmd MCommand) {
 	var released []uint16
+	id := s.sessID(sess)
 	if cmd.LocoKey == "*" {
 		s.mu.Lock()
-		for addr := range sess.locos {
+		held := sess.locos[cmd.ThrottleID]
+		for addr := range held {
 			released = append(released, addr)
 		}
-		sess.locos = map[uint16]struct{}{}
+		delete(sess.locos, cmd.ThrottleID)
 		s.mu.Unlock()
 		if g, ok := s.host.(drive.ReleaseGate); ok {
 			addr := uint16(0)
 			if len(released) > 0 {
 				addr = released[0]
 			}
-			if g.GateRelease(sess.id, cmd.ThrottleID, cmd.LocoKey, addr) {
+			if g.GateRelease(id, cmd.ThrottleID, cmd.LocoKey, addr) {
 				return
 			}
 		}
 		sess.write("M" + string(cmd.ThrottleID) + "-*" + propSep + "r")
 	} else if addr, _, ok := ParseLocoKey(cmd.LocoKey); ok {
 		s.mu.Lock()
-		delete(sess.locos, addr)
+		unholdLoco(sess.locos, cmd.ThrottleID, addr)
 		s.mu.Unlock()
 		released = []uint16{addr}
 		if g, ok := s.host.(drive.ReleaseGate); ok {
-			if g.GateRelease(sess.id, cmd.ThrottleID, cmd.LocoKey, addr) {
+			if g.GateRelease(id, cmd.ThrottleID, cmd.LocoKey, addr) {
 				return
 			}
 		}
 		sess.write(buildReleaseLine(cmd.ThrottleID, cmd.LocoKey))
 	}
 	for _, addr := range released {
-		s.host.Release(sess.id, addr)
+		s.host.Release(id, addr)
 	}
 }
 
@@ -635,12 +673,13 @@ func (s *Server) handleAction(sess *session, cmd MCommand) {
 		return
 	}
 	prop := cmd.Properties[0]
-	addrs := s.addrs(sess, cmd.LocoKey)
+	id := s.sessID(sess)
+	addrs := s.addrs(sess, cmd.ThrottleID, cmd.LocoKey)
 	if g, ok := s.host.(drive.ActionGate); ok {
 		if len(addrs) == 0 {
 			if cmd.LocoKey != "*" {
 				if addr, _, parsed := ParseLocoKey(cmd.LocoKey); parsed {
-					if g.Action(sess.id, cmd.ThrottleID, cmd.LocoKey, addr, prop) {
+					if g.Action(id, cmd.ThrottleID, cmd.LocoKey, addr, prop) {
 						return
 					}
 				}
@@ -651,13 +690,13 @@ func (s *Server) handleAction(sess *session, cmd MCommand) {
 			// One wire command, one gate call: the consumer expands "*" over
 			// its own per-throttle view. Calling per held address would
 			// replay the same action len(addrs) times.
-			if g.Action(sess.id, cmd.ThrottleID, cmd.LocoKey, addrs[0], prop) {
+			if g.Action(id, cmd.ThrottleID, cmd.LocoKey, addrs[0], prop) {
 				return
 			}
 		} else {
 			allHandled := true
 			for _, addr := range addrs {
-				if !g.Action(sess.id, cmd.ThrottleID, cmd.LocoKey, addr, prop) {
+				if !g.Action(id, cmd.ThrottleID, cmd.LocoKey, addr, prop) {
 					allHandled = false
 					break
 				}
@@ -684,7 +723,7 @@ func (s *Server) handleAction(sess *session, cmd MCommand) {
 			}
 			sess.speed[addr] = speed
 			s.mu.Unlock()
-			_ = s.host.SetSpeed(sess.id, addr, speed, forward, 128)
+			_ = s.host.SetSpeed(id, addr, speed, forward, 128)
 		}
 	case len(prop) >= 2 && prop[0] == 'R':
 		forward := prop[1] != '0'
@@ -698,7 +737,7 @@ func (s *Server) handleAction(sess *session, cmd MCommand) {
 					speed = st.Speed
 				}
 			}
-			_ = s.host.SetSpeed(sess.id, addr, speed, forward, 128)
+			_ = s.host.SetSpeed(id, addr, speed, forward, 128)
 		}
 	case len(prop) >= 2 && prop[0] == 'f':
 		fn, on, ok := parseForce(prop)
@@ -738,7 +777,7 @@ func (s *Server) handleAction(sess *session, cmd MCommand) {
 			}
 			sess.speed[addr] = 1
 			s.mu.Unlock()
-			_ = s.host.SetSpeed(sess.id, addr, 1, forward, 128)
+			_ = s.host.SetSpeed(id, addr, 1, forward, 128)
 		}
 	case prop == "I":
 		for _, addr := range addrs {
@@ -749,7 +788,7 @@ func (s *Server) handleAction(sess *session, cmd MCommand) {
 			}
 			sess.speed[addr] = 0
 			s.mu.Unlock()
-			_ = s.host.SetSpeed(sess.id, addr, 0, forward, 128)
+			_ = s.host.SetSpeed(id, addr, 0, forward, 128)
 		}
 	}
 }
@@ -758,7 +797,11 @@ func (s *Server) setFn(sess *session, addr uint16, fn uint8, on bool) {
 	if s.fnState(sess, addr, fn) == on {
 		return
 	}
-	_ = s.host.SetFunction(sess.id, addr, fn, on)
+	s.mu.Lock()
+	id := sess.id
+	tid := sess.throttle
+	s.mu.Unlock()
+	_ = s.host.SetFunction(id, addr, fn, on)
 	s.mu.Lock()
 	bits := sess.fnBits[addr]
 	if on {
@@ -767,7 +810,6 @@ func (s *Server) setFn(sess *session, addr uint16, fn uint8, on bool) {
 		bits &^= 1 << fn
 	}
 	sess.fnBits[addr] = bits
-	tid := sess.throttle
 	s.mu.Unlock()
 	if tid == 0 {
 		tid = '0'
@@ -812,12 +854,13 @@ func (s *Server) setMomentary(sess *session, addr uint16, fn uint8, mom bool) {
 	sess.momentary[addr][fn] = mom
 }
 
-func (s *Server) addrs(sess *session, key string) []uint16 {
+func (s *Server) addrs(sess *session, throttleID byte, key string) []uint16 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	held := sess.locos[throttleID]
 	if key == "*" {
-		out := make([]uint16, 0, len(sess.locos))
-		for addr := range sess.locos {
+		out := make([]uint16, 0, len(held))
+		for addr := range held {
 			out = append(out, addr)
 		}
 		return out
@@ -826,7 +869,7 @@ func (s *Server) addrs(sess *session, key string) []uint16 {
 	if !ok {
 		return nil
 	}
-	if _, held := sess.locos[addr]; !held {
+	if _, ok := held[addr]; !ok {
 		return nil
 	}
 	return []uint16{addr}
@@ -837,12 +880,116 @@ func (sess *session) touch() {
 }
 
 func (sess *session) write(line string) {
+	sess.writeAll(line)
+}
+
+func (sess *session) writeAll(lines ...string) {
+	if len(lines) == 0 {
+		return
+	}
 	sess.wmu.Lock()
 	defer sess.wmu.Unlock()
-	_ = sess.conn.SetWriteDeadline(time.Now().Add(writeTimeout))
-	if _, err := sess.conn.Write([]byte(line + "\n")); err != nil {
-		_ = sess.conn.Close()
+	for _, line := range lines {
+		_ = sess.conn.SetWriteDeadline(time.Now().Add(writeTimeout))
+		if _, err := sess.conn.Write([]byte(line + "\n")); err != nil {
+			_ = sess.conn.Close()
+			return
+		}
 	}
+}
+
+func (s *Server) sessID(sess *session) drive.ClientID {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return sess.id
+}
+
+func (s *Server) isClosed() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.closed
+}
+
+func (s *Server) reportError(err error) {
+	if s.cfg.onError != nil {
+		s.cfg.onError(err)
+	}
+}
+
+func isClosedNetErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, net.ErrClosed) {
+		return true
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "closed network connection") || strings.Contains(msg, "use of closed")
+}
+
+func holdLoco(locos map[byte]map[uint16]struct{}, tid byte, addr uint16) {
+	m := locos[tid]
+	if m == nil {
+		m = map[uint16]struct{}{}
+		locos[tid] = m
+	}
+	m[addr] = struct{}{}
+}
+
+func unholdLoco(locos map[byte]map[uint16]struct{}, tid byte, addr uint16) {
+	m := locos[tid]
+	if m == nil {
+		return
+	}
+	delete(m, addr)
+	if len(m) == 0 {
+		delete(locos, tid)
+	}
+}
+
+func sessionHoldsAddr(locos map[byte]map[uint16]struct{}, addr uint16) bool {
+	for _, m := range locos {
+		if _, ok := m[addr]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func allSessionLocos(locos map[byte]map[uint16]struct{}) []uint16 {
+	seen := make(map[uint16]struct{})
+	out := make([]uint16, 0)
+	for _, m := range locos {
+		for addr := range m {
+			if _, ok := seen[addr]; ok {
+				continue
+			}
+			seen[addr] = struct{}{}
+			out = append(out, addr)
+		}
+	}
+	return out
+}
+
+// throttleHolding returns the MultiThrottle id that holds addr. Prefer last.
+func throttleHolding(locos map[byte]map[uint16]struct{}, last byte, addr uint16) (byte, bool) {
+	if m := locos[last]; m != nil {
+		if _, ok := m[addr]; ok {
+			if last == 0 {
+				return '0', true
+			}
+			return last, true
+		}
+	}
+	for tid, m := range locos {
+		if _, ok := m[addr]; ok {
+			if tid == 0 {
+				return '0', true
+			}
+			return tid, true
+		}
+	}
+	return 0, false
 }
 
 type nopHost struct{}
