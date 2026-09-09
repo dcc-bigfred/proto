@@ -230,7 +230,7 @@ cli.encode(
 sock.send(&out)?;
 ```
 
-`address_from_cvs` / `address_cv_writes` map CV1 / 17 / 18 / 29 to a DCC locomotive address.
+`address_from_cvs` / `address_cv_writes` map CV1 / 17 / 18 / 29 to a DCC locomotive address (NMRA CV 29 bit 5). `decode_address` / `address_cv_writes_bit` take a configurable long-address bit (RailBOX uses 3). `apply_railcom_plus` toggles CV 28 bit 7.
 
 ## Emergency stop
 
