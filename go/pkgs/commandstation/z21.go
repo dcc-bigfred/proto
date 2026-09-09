@@ -34,6 +34,12 @@ const (
 	z21BcAllLocos uint32 = z21.BcAllLocos
 )
 
+// awaitMatching failure modes callers can branch on.
+var (
+	ErrResponseTimeout = errors.New("response timeout")
+	ErrStationClosed   = errors.New("command station closed")
+)
+
 const (
 	z21ReconnectBackoff  = 2 * time.Second
 	z21HeartbeatInterval = 10 * time.Second
@@ -53,6 +59,7 @@ func NewZ21Roco(netAddr string, netPort uint16) (*Z21Roco, error) {
 		stop:            make(chan struct{}),
 		metrics:         newZ21Metrics(),
 	}
+	roco.defaultSpeedSteps.Store(128)
 	if err := roco.dial(); err != nil {
 		return nil, err
 	}
@@ -113,6 +120,13 @@ type Z21Roco struct {
 	// metrics holds lock-free hot-path counters. Always non-nil; bumping it is
 	// near-free and OTel-agnostic (see z21_metrics.go).
 	metrics *z21Metrics
+
+	// lastSpeedSteps is the most recent SetSpeed steps (14/28/128), used by
+	// EmergencyStop so 14/28-step layouts are not forced to 128.
+	lastSpeedSteps atomic.Uint32
+	// defaultSpeedSteps is the command-station catalogue (daemon SpeedSteps)
+	// used by EmergencyStop before the first SetSpeed.
+	defaultSpeedSteps atomic.Uint32
 }
 
 // infoTimeout returns the read deadline used for loco-info queries.
@@ -474,14 +488,14 @@ func (z *Z21Roco) awaitMatching(timeout time.Duration, match func(pkt []byte) bo
 	for {
 		select {
 		case <-z.stop:
-			return nil, errors.New("command station closed")
+			return nil, ErrStationClosed
 		case pkt := <-z.syncCh:
 			if match(pkt) {
 				return pkt, nil
 			}
 		case <-deadline:
 			z.metrics.incr(&z.metrics.syncTimeouts)
-			return nil, errors.New("response timeout")
+			return nil, ErrResponseTimeout
 		}
 	}
 }
@@ -558,33 +572,36 @@ func (z *Z21Roco) WriteCV(mode Mode, lcv LocoCV, options ...ctxOptions) error {
 	ctx := RequestContext{timeout: z.Timeout, verify: false, retries: 2, settle: 200}
 	applyMethodsToCtx(&ctx, options)
 
+	if mode != ProgrammingTrackMode && mode != MainTrackMode {
+		return errors.New("unrecognized mode")
+	}
+
 	req, err := z.buildCVRequest(mode, lcv, true)
 	if err != nil {
 		return fmt.Errorf("cannot build CV request in WriteCV: %s", err.Error())
 	}
 
-	// we need to restore the power later on
-	if mode == ProgrammingTrackMode {
-		defer z.markBuildTrackPowerOff()
-	}
-
-	logrus.Debugf("Writing CV: loco=%d, CV%d=%d", lcv.LocoId, lcv.Cv.Num, lcv.Cv.Value)
-	if _, writeErr := z.write(req); writeErr != nil {
-		return fmt.Errorf("cannot write CV: %s", writeErr.Error())
-	}
-
-	if ctx.verify {
-		logrus.Debug("Verifying written CV")
-		time.Sleep(ctx.settle)
-		res, readErr := z.readCVValue(mode, lcv, ctx.timeout, ctx.retries)
-		if readErr != nil {
-			return fmt.Errorf("cannot verify CV was written: %s", readErr.Error())
+	// POM write has no Z21 reply (spec §6.6). Do not wait, even if Verify is set.
+	if mode == MainTrackMode {
+		logrus.Debugf("Writing CV POM: loco=%d, CV%d=%d", lcv.LocoId, lcv.Cv.Num, lcv.Cv.Value)
+		if _, writeErr := z.write(req); writeErr != nil {
+			return fmt.Errorf("cannot write CV: %s", writeErr.Error())
 		}
-		if res.value != byte(lcv.Cv.Value) {
-			return fmt.Errorf("cannot write CV, the value differs after a write")
-		}
+		return nil
 	}
 
+	defer z.markBuildTrackPowerOff()
+
+	wantCV := uint16(lcv.Cv.Num)
+	logrus.Debugf("Writing CV: loco=%d, CV%d=%d", lcv.LocoId, wantCV, lcv.Cv.Value)
+	value, writeErr := z.awaitProgCV(req, wantCV, ctx.timeout, ctx.retries)
+	if writeErr != nil {
+		return fmt.Errorf("cannot write CV%d: %w", wantCV, writeErr)
+	}
+	// Confirm against the write's own LAN_X_CV_RESULT. Do not issue a second read.
+	if ctx.verify && value != byte(lcv.Cv.Value) {
+		return fmt.Errorf("cannot write CV%d, the value differs after a write (got %d, want %d)", wantCV, value, byte(lcv.Cv.Value))
+	}
 	return nil
 }
 
@@ -596,16 +613,23 @@ func (z *Z21Roco) ReadCV(mode Mode, lcv LocoCV, options ...ctxOptions) (int, err
 	ctx := RequestContext{timeout: z.Timeout, verify: false, retries: 2, settle: 200}
 	applyMethodsToCtx(&ctx, options)
 
-	// we need to restore the power later on
+	if mode != ProgrammingTrackMode && mode != MainTrackMode {
+		return 0, errors.New("unrecognized mode")
+	}
 	if mode == ProgrammingTrackMode {
 		defer z.markBuildTrackPowerOff()
 	}
 
-	res, readErr := z.readCVValue(mode, lcv, ctx.timeout, ctx.retries)
-	if readErr != nil {
-		return 0, fmt.Errorf("cannot read CV: %s", readErr.Error())
+	req, err := z.buildCVRequest(mode, lcv, false)
+	if err != nil {
+		return 0, fmt.Errorf("cannot build CV request: %s", err.Error())
 	}
-	return int(res.value), nil
+	wantCV := uint16(lcv.Cv.Num)
+	value, readErr := z.awaitProgCV(req, wantCV, ctx.timeout, ctx.retries)
+	if readErr != nil {
+		return 0, fmt.Errorf("cannot read CV%d: %w", wantCV, readErr)
+	}
+	return int(value), nil
 }
 
 // Sends a function request to the decoder
@@ -676,109 +700,66 @@ func (z *Z21Roco) ListFunctions(addr LocoAddr) ([]int, error) {
 	return activeFunctions, nil
 }
 
-type cvResult struct {
-	cv     uint16 // 0=CV1 (N+1)
-	value  byte
-	source string // LAN_X_CV_RESULT/NACK/NACK_SC
+// awaitProgCV sends a programming-track or POM-read request and waits for
+// LAN_X_CV_RESULT of wantCV (1-based), or NACK / NACK_SC. Other datagrams
+// and results for a different CV are ignored. Retries only on timeout.
+func (z *Z21Roco) awaitProgCV(req []byte, wantCV uint16, timeout time.Duration, retries uint8) (byte, error) {
+	var lastErr error
+	for i := 0; i <= int(retries); i++ {
+		value, err := z.sendAndAwaitCV(req, wantCV, timeout)
+		if err == nil || !errors.Is(err, ErrResponseTimeout) {
+			return value, err
+		}
+		lastErr = err
+		logrus.Debugf("CV%d reply timed out (attempt %d/%d)", wantCV, i+1, int(retries)+1)
+	}
+	return 0, lastErr
 }
 
-func (res *cvResult) Error() error {
-	switch res.source {
-	// ok, we return a correct result
-	case "LAN_X_CV_RESULT":
-		return nil
-	// below are errors returned by Command Station, so the network is okay, but the error is on the protocol side / input data
-	case "LAN_X_CV_NACK":
-		return fmt.Errorf("missing RailCom acknowledgement (NACK_SC)")
-	case "LAN_X_CV_NACK_SC":
-		return fmt.Errorf("short circuit (LAN_X_CV_NACK_SC)")
-	}
-	return fmt.Errorf("unknown error (%s)", res.source)
-}
-
-func (z *Z21Roco) parseCVResponse(pkt []byte) (cvResult, bool) {
-	if len(pkt) < 6 {
-		return cvResult{}, false
-	}
-	dataLen := binary.LittleEndian.Uint16(pkt[0:2])
-	header := binary.LittleEndian.Uint16(pkt[2:4])
-	if header != 0x0040 || int(dataLen) != len(pkt) {
-		return cvResult{}, false
-	}
-
-	// RESULT: 64 14 CV_MSB CV_LSB Value XOR
-	if len(pkt) >= 10 && pkt[4] == 0x64 && pkt[5] == 0x14 {
-		return cvResult{
-			cv:     (uint16(pkt[6]) << 8) | uint16(pkt[7]),
-			value:  pkt[8],
-			source: "LAN_X_CV_RESULT",
-		}, true
-	}
-	// NACKs
-	if pkt[4] == 0x61 && pkt[5] == 0x13 {
-		return cvResult{source: "LAN_X_CV_NACK"}, true
-	}
-	if pkt[4] == 0x61 && pkt[5] == 0x12 {
-		return cvResult{source: "LAN_X_CV_NACK_SC"}, true
-	}
-	return cvResult{}, false
-}
-
-// Sends and waits for LAN_X_CV_* (read or write-result). The reply is
-// delivered by the read loop via syncCh; we filter for a CV packet.
-func (z *Z21Roco) sendAndAwait(req []byte, timeout time.Duration) (cvResult, error) {
+// sendAndAwaitCV sends req and waits for a CV reply for wantCV.
+func (z *Z21Roco) sendAndAwaitCV(req []byte, wantCV uint16, timeout time.Duration) (byte, error) {
 	z.beginSync()
 	defer z.endSync()
 
-	logrus.Debugf("z21.sendAndAwait: % X", req)
+	logrus.Debugf("z21.sendAndAwaitCV: % X", req)
 	if _, err := z.write(req); err != nil {
-		return cvResult{}, err
+		return 0, err
 	}
-	var res cvResult
-	pkt, err := z.awaitMatching(timeout, func(p []byte) bool {
-		r, ok := z.parseCVResponse(p)
-		if ok {
-			res = r
+	var got z21.CvReply
+	_, err := z.awaitMatching(timeout, func(p []byte) bool {
+		r, ok := z21.ParseCvReply(p)
+		if !ok {
+			return false
 		}
-		return ok
+		switch r.Kind {
+		case z21.CvNack, z21.CvNackSC:
+			got = r
+			return true
+		case z21.CvResult:
+			if r.CV != wantCV {
+				return false
+			}
+			got = r
+			return true
+		default:
+			return false
+		}
 	})
 	if err != nil {
-		return cvResult{}, err
+		return 0, err
 	}
-	_ = pkt
-	switch res.source {
-	case "LAN_X_CV_NACK":
+	switch got.Kind {
+	case z21.CvNack:
 		z.metrics.incr(&z.metrics.cvNacks)
-	case "LAN_X_CV_NACK_SC":
+		return 0, fmt.Errorf("decoder NACK on CV%d", wantCV)
+	case z21.CvNackSC:
 		z.metrics.incr(&z.metrics.cvNackSC)
+		return 0, fmt.Errorf("short circuit on CV%d", wantCV)
+	case z21.CvResult:
+		return got.Value, nil
+	default:
+		return 0, fmt.Errorf("unexpected CV reply")
 	}
-	return res, nil
-}
-
-// readCVValue is reading the POM/PROG CV response
-func (z *Z21Roco) readCVValue(mode Mode, lcv LocoCV, timeout time.Duration, retries uint8) (cvResult, error) {
-	req, reqErr := z.buildCVRequest(mode, lcv, false)
-	if reqErr != nil {
-		return cvResult{}, fmt.Errorf("cannot build CV request: %s", reqErr)
-	}
-
-	var lastErr error
-	for i := 0; i <= int(retries); i++ {
-		logrus.Debugf("Try [%d/%d]", i, retries)
-		res, err := z.sendAndAwait(req, timeout)
-		if err == nil {
-			if responseErr := res.Error(); responseErr != nil {
-				lastErr = fmt.Errorf("cannot read CV: %s", responseErr.Error())
-				err = lastErr
-				continue
-			}
-
-			return res, nil
-		}
-		lastErr = err
-		time.Sleep(200 * time.Millisecond)
-	}
-	return cvResult{}, lastErr
 }
 
 // extractFunctionBit extracts the state of a specific function from fnState
@@ -889,6 +870,7 @@ func (z *Z21Roco) SetSpeed(addr LocoAddr, speed uint8, forward bool, speedSteps 
 	default:
 		return fmt.Errorf("invalid speed steps: %d (must be 14, 28, or 128)", speedSteps)
 	}
+	z.lastSpeedSteps.Store(uint32(speedSteps))
 
 	// Build and send the speed command
 	req := z.buildSetLocoSpeed(addr, speed, forward, speedStepsProto)
@@ -930,7 +912,23 @@ func (z *Z21Roco) GetSpeed(addr LocoAddr) (uint8, bool, error) {
 // EmergencyStop sends LAN_X_SET_LOCO_DRIVE with V=1 (per-loco e-stop).
 // Direction (R) is preserved. This is not LAN_X_SET_STOP (layout-wide halt).
 func (z *Z21Roco) EmergencyStop(addr LocoAddr, forward bool) error {
-	return z.SetSpeed(addr, 1, forward, 128)
+	steps := uint8(z.lastSpeedSteps.Load())
+	if steps != 14 && steps != 28 && steps != 128 {
+		steps = uint8(z.defaultSpeedSteps.Load())
+	}
+	if steps != 14 && steps != 28 && steps != 128 {
+		steps = 128
+	}
+	return z.SetSpeed(addr, 1, forward, steps)
+}
+
+// SetSpeedSteps records the command-station catalogue used by EmergencyStop
+// when no SetSpeed has run yet (BigFred daemon SpeedSteps).
+func (z *Z21Roco) SetSpeedSteps(steps uint8) {
+	if steps != 14 && steps != 28 && steps != 128 {
+		steps = 128
+	}
+	z.defaultSpeedSteps.Store(uint32(steps))
 }
 
 // encodeLocoDriveDB3 builds DB3 (RVVVVVVV) for LAN_X_SET_LOCO_DRIVE (§4.2).

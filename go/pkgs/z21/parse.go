@@ -188,6 +188,100 @@ func parseCvRecord(pkt []byte) (CvReply, bool) {
 	return CvReply{}, false
 }
 
+// ParseSetStop is LAN_X_SET_STOP (0x80).
+func ParseSetStop(pkt []byte) bool {
+	_, header, ok := PacketHeader(pkt)
+	return ok && header == HeaderXBus && len(pkt) >= 5 && pkt[4] == 0x80
+}
+
+// ParseSetLocoEStop is LAN_X_SET_LOCO_ESTOP (0x92).
+func ParseSetLocoEStop(pkt []byte) (addr uint16, ok bool) {
+	if len(pkt) < 8 {
+		return 0, false
+	}
+	_, header, okHdr := PacketHeader(pkt)
+	if !okHdr || header != HeaderXBus || pkt[4] != 0x92 {
+		return 0, false
+	}
+	return ParseAddr(pkt, 5)
+}
+
+// ParsePurgeLoco is LAN_X_PURGE_LOCO (E3 44).
+func ParsePurgeLoco(pkt []byte) (addr uint16, ok bool) {
+	if len(pkt) < 9 {
+		return 0, false
+	}
+	_, header, okHdr := PacketHeader(pkt)
+	if !okHdr || header != HeaderXBus || pkt[4] != 0xE3 || pkt[5] != 0x44 {
+		return 0, false
+	}
+	return ParseAddr(pkt, 6)
+}
+
+// ParsePomWriteByte is LAN_X_CV_POM_WRITE_BYTE. cvWire is 0-based.
+func ParsePomWriteByte(pkt []byte) (addr uint16, cvWire uint16, value uint8, ok bool) {
+	if len(pkt) < 12 {
+		return 0, 0, 0, false
+	}
+	_, header, okHdr := PacketHeader(pkt)
+	if !okHdr || header != HeaderXBus || pkt[4] != 0xE6 || pkt[5] != 0x30 {
+		return 0, 0, 0, false
+	}
+	if pkt[8]&0xFC != 0xEC {
+		return 0, 0, 0, false
+	}
+	addr, ok = ParseAddr(pkt, 6)
+	if !ok {
+		return 0, 0, 0, false
+	}
+	cvWire = uint16(pkt[8]&0x03)<<8 | uint16(pkt[9])
+	return addr, cvWire, pkt[10], true
+}
+
+// ParsePomReadByte is LAN_X_CV_POM_READ_BYTE. cvWire is 0-based.
+func ParsePomReadByte(pkt []byte) (addr uint16, cvWire uint16, ok bool) {
+	if len(pkt) < 12 {
+		return 0, 0, false
+	}
+	_, header, okHdr := PacketHeader(pkt)
+	if !okHdr || header != HeaderXBus || pkt[4] != 0xE6 || pkt[5] != 0x30 {
+		return 0, 0, false
+	}
+	if pkt[8]&0xFC != 0xE4 {
+		return 0, 0, false
+	}
+	addr, ok = ParseAddr(pkt, 6)
+	if !ok {
+		return 0, 0, false
+	}
+	cvWire = uint16(pkt[8]&0x03)<<8 | uint16(pkt[9])
+	return addr, cvWire, true
+}
+
+// ParseProgWrite is LAN_X_CV_WRITE (24 12). cvWire is 0-based.
+func ParseProgWrite(pkt []byte) (cvWire uint16, value uint8, ok bool) {
+	if len(pkt) < 10 {
+		return 0, 0, false
+	}
+	_, header, okHdr := PacketHeader(pkt)
+	if !okHdr || header != HeaderXBus || pkt[4] != 0x24 || pkt[5] != 0x12 {
+		return 0, 0, false
+	}
+	return uint16(pkt[6])<<8 | uint16(pkt[7]), pkt[8], true
+}
+
+// ParseProgRead is LAN_X_CV_READ (23 11). cvWire is 0-based.
+func ParseProgRead(pkt []byte) (cvWire uint16, ok bool) {
+	if len(pkt) < 9 {
+		return 0, false
+	}
+	_, header, okHdr := PacketHeader(pkt)
+	if !okHdr || header != HeaderXBus || pkt[4] != 0x23 || pkt[5] != 0x11 {
+		return 0, false
+	}
+	return uint16(pkt[6])<<8 | uint16(pkt[7]), true
+}
+
 func handshakeReply(pkt []byte, serial uint32) ([]byte, bool) {
 	_, header, ok := PacketHeader(pkt)
 	if !ok {
@@ -200,8 +294,6 @@ func handshakeReply(pkt []byte, serial uint32) ([]byte, bool) {
 		return BuildHWInfoReply(hwTypeZ21Black, firmwareBCD), true
 	case HeaderGetCode:
 		return BuildLAN(HeaderGetCode, []byte{0x00}), true
-	case HeaderSystemStateGetData:
-		return buildSystemStateReply(), true
 	case HeaderXBus:
 		if len(pkt) < 7 {
 			return nil, false

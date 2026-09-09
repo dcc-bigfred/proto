@@ -2,7 +2,7 @@ package commandstation
 
 import "testing"
 
-func TestStubEmergencyStopFallsBackToSpeedZero(t *testing.T) {
+func TestStubEmergencyStopFallsBackToSpeedOne(t *testing.T) {
 	var gotSpeed uint8
 	var gotFwd bool
 	s := &StubStation{
@@ -15,7 +15,7 @@ func TestStubEmergencyStopFallsBackToSpeedZero(t *testing.T) {
 	if err := s.EmergencyStop(3, false); err != nil {
 		t.Fatal(err)
 	}
-	if gotSpeed != 0 || gotFwd {
-		t.Fatalf("EmergencyStop stub = speed %d fwd %v; want 0 false", gotSpeed, gotFwd)
+	if gotSpeed != 1 || gotFwd {
+		t.Fatalf("EmergencyStop stub = speed %d fwd %v; want 1 false", gotSpeed, gotFwd)
 	}
 }

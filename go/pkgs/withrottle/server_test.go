@@ -266,6 +266,10 @@ func drainUntil(t *testing.T, r *bufio.Reader, pred func(string) bool) {
 }
 
 func wtDial(t *testing.T, srv *Server) (net.Conn, *bufio.Reader) {
+	return wtDialHU(t, srv, "test")
+}
+
+func wtDialHU(t *testing.T, srv *Server, hu string) (net.Conn, *bufio.Reader) {
 	t.Helper()
 	conn, err := net.Dial("tcp", srv.Addr().String())
 	if err != nil {
@@ -273,7 +277,7 @@ func wtDial(t *testing.T, srv *Server) (net.Conn, *bufio.Reader) {
 	}
 	t.Cleanup(func() { _ = conn.Close() })
 	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
-	if _, err := fmt.Fprintln(conn, "HUtest"); err != nil {
+	if _, err := fmt.Fprintln(conn, "HU"+hu); err != nil {
 		t.Fatal(err)
 	}
 	r := bufio.NewReader(conn)
@@ -452,9 +456,9 @@ func TestNotifyNotBlockedByStalledPeer(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = srv.Close() })
-	stalled, _ := wtDial(t, srv)
+	stalled, _ := wtDialHU(t, srv, "stalled")
 	_ = stalled.SetDeadline(time.Time{})
-	good, r := wtDial(t, srv)
+	good, r := wtDialHU(t, srv, "good")
 	_ = good.SetDeadline(time.Now().Add(2 * time.Second))
 
 	done := make(chan struct{})

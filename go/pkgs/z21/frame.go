@@ -19,12 +19,19 @@ const (
 	HeaderGetCode            uint16 = 0x0018
 	HeaderSystemStateData    uint16 = 0x0084
 	HeaderSystemStateGetData uint16 = 0x0085
+	HeaderRMBusGetData       uint16 = 0x0081
+	HeaderRMBusDataChanged   uint16 = 0x0080
+	HeaderGetLocoMode        uint16 = 0x0060
+	HeaderLocoNetFromLAN     uint16 = 0x00A2
+	HeaderLanKeepalive       uint16 = 0x0035
+	HeaderLanSessionProbe    uint16 = 0x0036
 )
 
 // Broadcast flags (§2.16).
 const (
 	BcDrivingSwitching uint32 = 0x00000001
 	BcAllLocos         uint32 = 0x00010000
+	BcSystemState      uint32 = 0x00000100
 )
 
 // XOR of all bytes. X-Bus trailing checksum is XOR so the full X payload

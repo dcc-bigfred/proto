@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"sync"
 	"testing"
 	"time"
 
@@ -133,20 +134,28 @@ func TestOpenUDPLoopback(t *testing.T) {
 		t.Fatal(err)
 	}
 	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) && len(host.speeds) == 0 {
+	var speeds []drive.LocoState
+	for time.Now().Before(deadline) {
+		speeds = host.snapshotSpeeds()
+		if len(speeds) > 0 {
+			break
+		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if len(host.speeds) == 0 || host.speeds[0].Speed != 50 {
-		t.Fatalf("SetSpeed host=%+v", host.speeds)
+	if len(speeds) == 0 || speeds[0].Speed != 50 {
+		t.Fatalf("SetSpeed host=%+v", speeds)
 	}
 }
 
 type openRecHost struct {
+	mu     sync.Mutex
 	speeds []drive.LocoState
 	locos  map[uint16]drive.LocoState
 }
 
 func (h *openRecHost) SetSpeed(_ drive.ClientID, addr uint16, speed uint8, forward bool, steps uint8) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	if h.locos == nil {
 		h.locos = map[uint16]drive.LocoState{}
 	}
@@ -158,6 +167,8 @@ func (h *openRecHost) SetSpeed(_ drive.ClientID, addr uint16, speed uint8, forwa
 }
 func (h *openRecHost) SetFunction(drive.ClientID, uint16, uint8, bool) error { return nil }
 func (h *openRecHost) LocoState(addr uint16) (drive.LocoState, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	if h.locos != nil {
 		if st, ok := h.locos[addr]; ok {
 			if st.Steps == 0 {
@@ -170,3 +181,9 @@ func (h *openRecHost) LocoState(addr uint16) (drive.LocoState, error) {
 }
 func (h *openRecHost) SetTrackPower(drive.ClientID, bool) error { return nil }
 func (h *openRecHost) Release(drive.ClientID, uint16)           {}
+
+func (h *openRecHost) snapshotSpeeds() []drive.LocoState {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return append([]drive.LocoState(nil), h.speeds...)
+}

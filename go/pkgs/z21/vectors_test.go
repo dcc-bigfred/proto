@@ -157,6 +157,10 @@ func TestAddressFromCVs(t *testing.T) {
 	if !ok || addr != 1234 || !long {
 		t.Fatalf("long: addr=%d long=%v ok=%v", addr, long, ok)
 	}
+	addr, long, ok = AddressFromCVs(0xC8, 0, 0, 0x06)
+	if !ok || addr != 72 || long {
+		t.Fatalf("short mask: addr=%d long=%v ok=%v", addr, long, ok)
+	}
 }
 
 func TestAddressCVWrites(t *testing.T) {
@@ -176,6 +180,44 @@ func TestAddressCVWrites(t *testing.T) {
 	}
 	if _, _, err := AddressCVWrites(0, 0); err != ErrInvalidAddress {
 		t.Fatalf("zero addr: %v", err)
+	}
+	if _, _, err := AddressCVWrites(LongMax+1, 0); err != ErrInvalidAddress {
+		t.Fatalf("above LongMax: %v", err)
+	}
+	writes, long, err = AddressCVWrites(LongMax, 0x06)
+	if err != nil || !long || len(writes) != 3 {
+		t.Fatalf("LongMax: %+v long=%v err=%v", writes, long, err)
+	}
+}
+
+func TestAddressCVWritesRailComPlus(t *testing.T) {
+	cur := byte(131)
+	writes, _, err := AddressCVWrites(121, 30, WithRailComPlusDisabled(true, &cur))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if writes[0] != (CVWrite{RailComPlusCV, 3}) {
+		t.Fatalf("prepend: %+v", writes)
+	}
+	if writes[1].CV != 1 || writes[2].CV != 29 {
+		t.Fatalf("address writes: %+v", writes)
+	}
+
+	alreadyOff := byte(3)
+	writes, _, err = AddressCVWrites(121, 30, WithRailComPlusDisabled(true, &alreadyOff))
+	if err != nil || writes[0].CV == RailComPlusCV {
+		t.Fatalf("already off should skip CV28: %+v err=%v", writes, err)
+	}
+
+	writes, _, err = AddressCVWrites(121, 30, WithRailComPlusDisabled(true, nil))
+	if err != nil || writes[0].CV == RailComPlusCV {
+		t.Fatalf("unread CV28 should skip: %+v err=%v", writes, err)
+	}
+
+	off := byte(3)
+	writes, _, err = AddressCVWrites(7, 6, WithRailComPlusDisabled(false, &off))
+	if err != nil || writes[0] != (CVWrite{RailComPlusCV, 131}) {
+		t.Fatalf("enable: %+v err=%v", writes, err)
 	}
 }
 

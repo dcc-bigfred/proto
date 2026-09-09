@@ -28,6 +28,15 @@ pub enum Error {
 pub const HEADER_GET_SERIAL: u16 = 0x0010;
 pub const HEADER_XBUS: u16 = 0x0040;
 pub const HEADER_SET_BROADCAST: u16 = 0x0050;
+/// LAN_SYSTEMSTATE_DATACHANGED (§2.5).
+pub const HEADER_SYSTEMSTATE: u16 = 0x0084;
+/// LAN_RAILCOM_DATACHANGED (§2.9).
+pub const HEADER_RAILCOM: u16 = 0x0088;
+
+/// `CentralState` bit: programming mode active (§2.5, byte 16 bit 5).
+pub const CS_PROGRAMMING_MODE: u8 = 0x20;
+/// `RailCom` broadcast: at most this many unique loco addresses are tracked.
+pub const RAILCOM_ADDRS_MAX: usize = 8;
 
 /// XOR of all bytes. X-Bus trailing checksum is XOR so the payload plus
 /// checksum sums to 0.
@@ -281,36 +290,131 @@ fn parse_cv_record(pkt: &[u8]) -> Option<Event> {
     None
 }
 
+/// Inclusive short-address maximum (CV 1).
+pub const SHORT_MAX: u16 = 127;
+/// Inclusive extended-address maximum (CV 17/18).
+pub const LONG_MAX: u16 = 10239;
+/// NMRA / ESU / ZIMO long-address bit in CV 29 (RailBOX uses 3).
+pub const CV29_LONG_BIT: u8 = 5;
+/// ESU CV 28 — RailCom / RailComPlus options.
+pub const RAILCOM_PLUS_CV: u16 = 28;
+/// ESU §17.1.1: CV 28 bit 7 enables RailComPlus auto loco recognition.
+pub const RAILCOM_PLUS_BIT: u8 = 7;
+/// Mask for [`RAILCOM_PLUS_BIT`].
+pub const RAILCOM_PLUS_MASK: u8 = 1 << RAILCOM_PLUS_BIT;
+
+/// Why [`address_cv_writes_bit`] / [`apply_long_bit`] rejected the request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AddressError {
+    /// Address outside 1..=[`LONG_MAX`].
+    InvalidAddress,
+    /// Long-address bit index above 7.
+    InvalidLongBit,
+}
+
+impl core::fmt::Display for AddressError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(match self {
+            Self::InvalidAddress => "invalid DCC locomotive address",
+            Self::InvalidLongBit => "invalid CV 29 long-address bit",
+        })
+    }
+}
+
+/// True when `address` is stored in CV 17/18.
+#[must_use]
+pub fn is_long(address: u16) -> bool {
+    address > SHORT_MAX
+}
+
+/// CV 17 (high, with 0xC0) and CV 18 (low) for an extended address.
+#[must_use]
+pub fn encode_long_bytes(address: u16) -> (u8, u8) {
+    let n = address.min(LONG_MAX);
+    ((((n >> 8) as u8) & 0x3f) | 0xc0, n as u8)
+}
+
+/// Set or clear CV 28 bit 7 (RailComPlus) without touching the other bits.
+#[must_use]
+pub fn apply_railcom_plus(cv28: u8, on: bool) -> u8 {
+    if on {
+        cv28 | RAILCOM_PLUS_MASK
+    } else {
+        cv28 & !RAILCOM_PLUS_MASK
+    }
+}
+
+/// True when CV 28 bit 7 (RailComPlus auto recognition) is set.
+#[must_use]
+pub fn railcom_plus_on(cv28: u8) -> bool {
+    cv28 & RAILCOM_PLUS_MASK != 0
+}
+
+/// Set or clear the long-address bit without touching the others.
+pub fn apply_long_bit(cv29: u8, long: bool, bit: u8) -> Result<u8, AddressError> {
+    if bit > 7 {
+        return Err(AddressError::InvalidLongBit);
+    }
+    let mask = 1u8 << bit;
+    if long {
+        Ok(cv29 | mask)
+    } else {
+        Ok(cv29 & !mask)
+    }
+}
+
 /// Decode a DCC locomotive address from CV1, CV17, CV18, and CV29.
 ///
-/// The `bool` is `true` when CV29 bit 5 (`0x20`) selects the long address.
+/// `long_bit` is the CV 29 bit that selects the extended address (NMRA: 5).
+#[must_use]
+pub fn decode_address(cv1: u8, cv17: u8, cv18: u8, cv29: u8, long_bit: u8) -> (u16, bool) {
+    let long = long_bit <= 7 && (cv29 >> long_bit) & 1 == 1;
+    if long {
+        ((u16::from(cv17 & 0x3f) << 8) | u16::from(cv18), true)
+    } else {
+        (u16::from(cv1 & 0x7f), false)
+    }
+}
+
+/// Decode with NMRA CV 29 bit 5.
+///
+/// Always `Some`; kept for wizard / Go parity. Prefer [`decode_address`] for new code.
+#[deprecated(note = "use decode_address instead")]
 #[must_use]
 pub fn address_from_cvs(cv1: u8, cv17: u8, cv18: u8, cv29: u8) -> Option<(u16, bool)> {
-    if cv29 & 0x20 != 0 {
-        let addr = (u16::from(cv17 & 0x3F) << 8) | u16::from(cv18);
-        Some((addr, true))
-    } else {
-        Some((u16::from(cv1), false))
+    Some(decode_address(cv1, cv17, cv18, cv29, CV29_LONG_BIT))
+}
+
+/// CV writes that program `addr` (CV1 or CV17/18, plus CV29 `long_bit`).
+pub fn address_cv_writes_bit(
+    addr: u16,
+    cv29: u8,
+    long_bit: u8,
+) -> Result<Vec<(u16, u8), 3>, AddressError> {
+    if !(1..=LONG_MAX).contains(&addr) {
+        return Err(AddressError::InvalidAddress);
     }
+    let mut out = Vec::new();
+    if is_long(addr) {
+        let (cv17, cv18) = encode_long_bytes(addr);
+        let cv29 = apply_long_bit(cv29, true, long_bit)?;
+        let _ = out.push((17, cv17));
+        let _ = out.push((18, cv18));
+        let _ = out.push((29, cv29));
+    } else {
+        let cv29 = apply_long_bit(cv29, false, long_bit)?;
+        let _ = out.push((1, addr as u8));
+        let _ = out.push((29, cv29));
+    }
+    Ok(out)
 }
 
 /// CV writes that program `addr` into the decoder (CV1 or CV17/18, plus CV29 bit 5).
 ///
-/// Short address: CV1 + clear `0x20` in CV29. Long address: CV17 (`| 0xC0`), CV18, set `0x20`.
+/// Short address: CV1 + clear bit 5 in CV29. Long address: CV17 (`| 0xC0`), CV18, set bit 5.
 pub fn address_cv_writes(addr: u16, cv29: u8) -> Result<Vec<(u16, u8), 3>, Error> {
-    if addr == 0 {
-        return Err(Error::InvalidAddress);
-    }
-    let mut out = Vec::new();
-    if addr <= 127 {
-        let _ = out.push((1, addr as u8));
-        let _ = out.push((29, cv29 & !0x20));
-    } else {
-        let _ = out.push((17, ((addr >> 8) as u8) | 0xC0));
-        let _ = out.push((18, addr as u8));
-        let _ = out.push((29, cv29 | 0x20));
-    }
-    Ok(out)
+    // Bit 5 is always valid; only InvalidAddress is reachable here.
+    address_cv_writes_bit(addr, cv29, CV29_LONG_BIT).map_err(|_| Error::InvalidAddress)
 }
 
 fn encode_function_bytes(mask: u32) -> [u8; 5] {
@@ -542,6 +646,71 @@ pub enum Event {
     CvNack,
     /// LAN_X_CV_NACK_SC (short circuit on the programming track).
     CvNackSc,
+    /// LAN_SYSTEMSTATE_DATACHANGED.
+    SystemState(SystemState),
+    /// LAN_RAILCOM_DATACHANGED — a single RailCom-recognized loco address.
+    RailComLoco(u16),
+    /// LAN_X_BC_TRACK_POWER_ON (`61 01`): programming mode has ended.
+    TrackPowerOn,
+}
+
+/// Decoded LAN_SYSTEMSTATE_DATACHANGED (§2.5).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SystemState {
+    /// `ProgCurrent` (bytes 6–7, signed mA).
+    pub prog_current_ma: i16,
+    /// `CentralState` byte 16.
+    pub central_state: u8,
+    /// True when `CS_PROGRAMMING_MODE` is clear (we left service mode).
+    pub prog_mode_ended: bool,
+}
+
+/// Parse a LAN_SYSTEMSTATE_DATACHANGED record.
+#[must_use]
+pub fn parse_system_state(pkt: &[u8]) -> Option<SystemState> {
+    if pkt.len() < 8 || !valid_frame(pkt) {
+        return None;
+    }
+    let header = u16::from_le_bytes([pkt[2], pkt[3]]);
+    if header != HEADER_SYSTEMSTATE {
+        return None;
+    }
+    let prog_current_ma = i16::from_le_bytes([pkt[6], pkt[7]]);
+    let (central_state, prog_mode_ended) = if pkt.len() >= 17 {
+        let s = pkt[16];
+        (s, s & CS_PROGRAMMING_MODE == 0)
+    } else {
+        (0, false)
+    };
+    Some(SystemState {
+        prog_current_ma,
+        central_state,
+        prog_mode_ended,
+    })
+}
+
+/// Parse a LAN_RAILCOM_DATACHANGED record into its loco address.
+#[must_use]
+pub fn parse_railcom(pkt: &[u8]) -> Option<u16> {
+    if pkt.len() < 6 || !valid_frame(pkt) {
+        return None;
+    }
+    let header = u16::from_le_bytes([pkt[2], pkt[3]]);
+    if header != HEADER_RAILCOM {
+        return None;
+    }
+    let addr = u16::from_le_bytes([pkt[4], pkt[5]]);
+    (addr != 0).then_some(addr)
+}
+
+/// Parse a LAN_X_BC_TRACK_POWER_ON record (`61 01`).
+#[must_use]
+pub fn parse_track_power_on(pkt: &[u8]) -> bool {
+    pkt.len() >= 6
+        && valid_frame(pkt)
+        && u16::from_le_bytes([pkt[2], pkt[3]]) == HEADER_XBUS
+        && pkt[4] == 0x61
+        && pkt[5] == 0x01
 }
 
 /// Session-less client: firmware owns UDP.
@@ -572,6 +741,18 @@ impl Client {
             }
             if let Some(ev) = parse_cv_record(pkt) {
                 emit(ev);
+                continue;
+            }
+            if let Some(state) = parse_system_state(pkt) {
+                emit(Event::SystemState(state));
+                continue;
+            }
+            if let Some(addr) = parse_railcom(pkt) {
+                emit(Event::RailComLoco(addr));
+                continue;
+            }
+            if parse_track_power_on(pkt) {
+                emit(Event::TrackPowerOn);
                 continue;
             }
             if valid_frame(pkt) && pkt.len() >= 8 {
@@ -826,8 +1007,12 @@ mod tests {
 
     #[test]
     fn address_from_cvs_short_and_long() {
-        assert_eq!(address_from_cvs(7, 0, 0, 0x06), Some((7, false)));
-        assert_eq!(address_from_cvs(0, 0xC4, 0xD2, 0x26), Some((1234, true)));
+        #[allow(deprecated)]
+        let got = address_from_cvs(7, 0, 0, 0x06);
+        assert_eq!(got, Some((7, false)));
+        #[allow(deprecated)]
+        let got = address_from_cvs(0, 0xC4, 0xD2, 0x26);
+        assert_eq!(got, Some((1234, true)));
     }
 
     #[test]
@@ -845,5 +1030,130 @@ mod tests {
     #[test]
     fn address_cv_writes_rejects_zero() {
         assert_eq!(address_cv_writes(0, 0), Err(Error::InvalidAddress));
+    }
+
+    #[test]
+    fn rejects_out_of_range() {
+        assert_eq!(
+            address_cv_writes_bit(0, 30, CV29_LONG_BIT),
+            Err(AddressError::InvalidAddress)
+        );
+        assert_eq!(
+            address_cv_writes_bit(LONG_MAX + 1, 30, CV29_LONG_BIT),
+            Err(AddressError::InvalidAddress)
+        );
+        assert_eq!(
+            apply_long_bit(30, true, 8),
+            Err(AddressError::InvalidLongBit)
+        );
+    }
+
+    #[test]
+    fn short_clears_bit_after_cv1() {
+        let got = address_cv_writes_bit(13, 62, CV29_LONG_BIT).unwrap();
+        assert_eq!(got.as_slice(), &[(1, 13), (29, 30)]);
+    }
+
+    #[test]
+    fn long_9728_is_cv17_then_18_then_bit5() {
+        assert_eq!(encode_long_bytes(9728), (230, 0));
+        let got = address_cv_writes_bit(9728, 30, CV29_LONG_BIT).unwrap();
+        assert_eq!(got.as_slice(), &[(17, 230), (18, 0), (29, 62)]);
+    }
+
+    #[test]
+    fn railbox_long_bit_3() {
+        let got = address_cv_writes_bit(128, 0, 3).unwrap();
+        assert_eq!(got.as_slice()[2], (29, 1 << 3));
+    }
+
+    #[test]
+    fn apply_railcom_plus_toggles_bit_7() {
+        assert_eq!(apply_railcom_plus(131, false), 3);
+        assert_eq!(apply_railcom_plus(3, true), 131);
+        assert!(railcom_plus_on(131));
+        assert!(!railcom_plus_on(3));
+    }
+
+    #[test]
+    fn decode_short_13_and_long_2138_9728() {
+        assert_eq!(decode_address(13, 200, 89, 30, CV29_LONG_BIT), (13, false));
+        assert_eq!(decode_address(13, 200, 90, 62, CV29_LONG_BIT), (2138, true));
+        assert_eq!(decode_address(13, 230, 0, 62, CV29_LONG_BIT), (9728, true));
+    }
+
+    #[test]
+    fn parse_system_state_decodes_fields() {
+        let mut pkt = [0u8; 20];
+        pkt[0] = 0x14;
+        pkt[2] = 0x84;
+        pkt[6] = 42;
+        pkt[7] = 0;
+        pkt[16] = 0x00;
+        let got = parse_system_state(&pkt).expect("system state");
+        assert_eq!(got.prog_current_ma, 42);
+        assert_eq!(got.central_state, 0);
+        assert!(got.prog_mode_ended);
+    }
+
+    #[test]
+    fn parse_system_state_prog_mode_active() {
+        let mut pkt = [0u8; 20];
+        pkt[0] = 0x14;
+        pkt[2] = 0x84;
+        pkt[16] = CS_PROGRAMMING_MODE;
+        let got = parse_system_state(&pkt).expect("system state");
+        assert!(!got.prog_mode_ended);
+    }
+
+    #[test]
+    fn parse_railcom_extracts_address() {
+        let mut pkt = [0u8; 17];
+        pkt[0] = 0x11;
+        pkt[2] = 0x88;
+        pkt[4] = 13;
+        pkt[5] = 0;
+        assert_eq!(parse_railcom(&pkt), Some(13));
+    }
+
+    #[test]
+    fn parse_railcom_rejects_zero() {
+        let mut pkt = [0u8; 17];
+        pkt[0] = 0x11;
+        pkt[2] = 0x88;
+        assert_eq!(parse_railcom(&pkt), None);
+    }
+
+    #[test]
+    fn parse_track_power_on_recognises_61_01() {
+        assert!(parse_track_power_on(&[
+            0x07, 0x00, 0x40, 0x00, 0x61, 0x01, 0x60,
+        ]));
+        assert!(!parse_track_power_on(&[
+            0x07, 0x00, 0x40, 0x00, 0x61, 0x02, 0x63,
+        ]));
+    }
+
+    #[test]
+    fn on_bytes_emits_system_state_and_railcom() {
+        let mut railcom = [0u8; 17];
+        railcom[0] = 0x11;
+        railcom[2] = 0x88;
+        railcom[4] = 13;
+        let mut sys = [0u8; 20];
+        sys[0] = 0x14;
+        sys[2] = 0x84;
+        sys[6] = 7;
+        sys[16] = CS_PROGRAMMING_MODE;
+        let mut buf = std::vec![0u8; 0];
+        buf.extend_from_slice(&railcom);
+        buf.extend_from_slice(&sys);
+        let mut got: std::vec::Vec<Event> = std::vec::Vec::new();
+        Client::new().on_bytes(&buf, &mut |ev| got.push(ev));
+        assert!(got.contains(&Event::RailComLoco(13)));
+        assert!(matches!(
+            got.iter().find(|e| matches!(e, Event::SystemState(_))),
+            Some(Event::SystemState(s)) if s.prog_current_ma == 7
+        ));
     }
 }
