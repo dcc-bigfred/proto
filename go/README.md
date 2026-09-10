@@ -56,9 +56,9 @@ func main() {
 
 - [Go client guide](https://github.com/dcc-bigfred/proto/blob/main/docs/go/README.md)
 - [commandstation](https://pkg.go.dev/github.com/dcc-bigfred/proto/go/pkgs/commandstation) · [z21](https://pkg.go.dev/github.com/dcc-bigfred/proto/go/pkgs/z21) · [withrottle](https://pkg.go.dev/github.com/dcc-bigfred/proto/go/pkgs/withrottle) · [loconet](https://pkg.go.dev/github.com/dcc-bigfred/proto/go/pkgs/loconet) on pkg.go.dev
-- [Z21 LAN spec](https://github.com/dcc-bigfred/proto/blob/main/docs/z21.md)
-- [LocoNet spec](https://github.com/dcc-bigfred/proto/blob/main/docs/loconet.md)
-- [WiThrottle spec](https://github.com/dcc-bigfred/proto/blob/main/docs/withrottle.md)
+- [Z21 LAN spec](https://github.com/dcc-bigfred/proto/blob/main/docs/protos/z21.md)
+- [LocoNet spec](https://github.com/dcc-bigfred/proto/blob/main/docs/protos/loconet.md)
+- [WiThrottle spec](https://github.com/dcc-bigfred/proto/blob/main/docs/protos/withrottle.md)
 
 ## Consumers
 
