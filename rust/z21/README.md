@@ -14,6 +14,12 @@ dcc-bigfred-proto-z21 = "0.1"
 heapless = { version = "0.8", default-features = false }
 ```
 
+Optional RailCom snapshot (RCN-217 DYN via `LAN_RAILCOM_DATACHANGED`):
+
+```toml
+dcc-bigfred-proto-z21 = { version = "0.1", features = ["railcom"] }
+```
+
 ## Usage
 
 ```rust
@@ -60,7 +66,7 @@ out.clear();
 cli.encode(&z21::Command::TrackPower { on: true }, &mut out)?;
 ```
 
-Parse inbound datagrams with `on_bytes` (`Event::Serial`, `Event::LocoInfo`, `Event::CvResult` / `CvNack` / `CvNackSc`). Speed `0` is a normal stop; `1` is e-stop. CV/POM commands use 1-based NMRA numbers (`Command::CvRead`, `CvWrite`, `PomRead`, `PomWrite`).
+Parse inbound datagrams with `on_bytes` (`Event::Serial`, `Event::LocoInfo`, `Event::CvResult` / `CvNack` / `CvNackSc`). Speed `0` is a normal stop; `1` is e-stop. CV/POM commands use 1-based NMRA numbers (`Command::CvRead`, `CvWrite`, `PomRead`, `PomWrite`). `LAN_RAILCOM_DATACHANGED` (`0x88`) yields `Event::RailComLoco(addr)` only. Full speed/QoS telemetry is behind the `railcom` feature (`on_bytes_with_railcom` + [`dcc-bigfred-proto-railcom`](../railcom)); that path keeps **one parser per locomotive** so fields do not leak between addresses.
 
 UDP sketch (`std`):
 

@@ -25,6 +25,10 @@ name = "dcc-bigfred-proto-loconet"
 version = "0.1.0"
 
 [[package]]
+name = "dcc-bigfred-proto-railcom"
+version = "0.1.0"
+
+[[package]]
 name = "dcc-bigfred-proto-withrottle"
 version = "0.1.0"
 dependencies = [
@@ -44,6 +48,7 @@ dependencies = [
 name = "dcc-bigfred-proto-z21"
 version = "0.1.0"
 dependencies = [
+ "dcc-bigfred-proto-railcom",
  "heapless",
  "serde",
  "serde_json",

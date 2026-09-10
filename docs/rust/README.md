@@ -8,6 +8,7 @@ Same wire semantics as the [Go `commandstation` client](../go/README.md). There 
 |-------|------|
 | [`dcc-bigfred-proto-z21`](../../rust/z21) | Z21 LAN protocol (UDP datagrams) |
 | [`dcc-bigfred-proto-withrottle`](../../rust/withrottle) | WiThrottle protocol (TCP lines) |
+| [`dcc-bigfred-proto-railcom`](../../rust/railcom) | RailCom (RCN-217) parser; no transport |
 | `dcc-bigfred-commandstation` | Experimental `Station` trait + `Stub` (no I/O) |
 | `dcc-bigfred-proto-loconet` | Experimental gateway stub (real gateway is Go) |
 | `dcc-bigfred-proto-z21-server` / `dcc-bigfred-proto-withrottle-server` | Experimental `std` listeners |
@@ -20,6 +21,7 @@ Requires Rust ≥ 1.75.
 [dependencies]
 dcc-bigfred-proto-z21 = "0.1"
 dcc-bigfred-proto-withrottle = "0.1"
+dcc-bigfred-proto-railcom = "0.1"
 ```
 
 From this repository:
@@ -28,12 +30,14 @@ From this repository:
 [dependencies]
 dcc-bigfred-proto-z21 = { git = "https://github.com/dcc-bigfred/proto.git", path = "rust/z21" }
 dcc-bigfred-proto-withrottle = { git = "https://github.com/dcc-bigfred/proto.git", path = "rust/withrottle" }
+dcc-bigfred-proto-railcom = { git = "https://github.com/dcc-bigfred/proto.git", path = "rust/railcom" }
 ```
 
 Path dependency inside the workspace:
 
 ```toml
 dcc-bigfred-proto-z21 = { path = "../z21" }
+dcc-bigfred-proto-railcom = { path = "../railcom" }
 ```
 
 Output goes into a bounded `heapless` buffer (`WireBuf`, 256 bytes). `Error::BufferFull` means the buffer had no remaining capacity.
@@ -232,6 +236,32 @@ sock.send(&out)?;
 
 `address_from_cvs` / `address_cv_writes` map CV1 / 17 / 18 / 29 to a DCC locomotive address (NMRA CV 29 bit 5). `decode_address` / `address_cv_writes_bit` take a configurable long-address bit (RailBOX uses 3). `apply_railcom_plus` toggles CV 28 bit 7.
 
+## RailCom
+
+[`dcc-bigfred-proto-railcom`](../../rust/railcom) parses **RCN-217** (4-of-8, datagrams, DYN) with no transport. One `Parser` is one decoder (MOB by default; `Parser::stationary` for accessory SRQ). Z21 LAN `LAN_RAILCOM_DATACHANGED` (`0x88`) is a decoded subset (address, speed, QoS), not cutout bytes. With the Z21 `railcom` feature, `Client` keeps a bounded map of per-loco parsers so snapshots do not mix fields across addresses.
+
+Without the Z21 crate feature, `Client::on_bytes` still emits only `Event::RailComLoco(addr)` — the cheap path used after an address write.
+
+```toml
+dcc-bigfred-proto-z21 = { version = "0.1", features = ["railcom"] }
+```
+
+```rust
+use dcc_bigfred_proto_z21 as z21;
+
+let mut cli = z21::Client::new();
+cli.on_bytes_with_railcom(&buf, &mut |ev| match ev {
+    z21::Event::RailComLoco(addr) => println!("loco {addr}"),
+    _ => {}
+}, &mut |data| {
+    if let Some(kmh) = data.speed_kmh {
+        println!("speed {kmh} km/h");
+    }
+});
+```
+
+`on_connect` does **not** set RailCom broadcast flags (`BC_RAILCOM` / `BC_RAILCOM_ALL`); the host must send `encode_broadcast_flags` if it wants unsolicited `0x88` frames. Full Table 13 (tanks, temperature, track voltage) is only available from encoded channel-2 bytes via the railcom crate, not from Z21 LAN.
+
 ## Emergency stop
 
 Per-locomotive, not a global layout e-stop.
@@ -345,7 +375,7 @@ fn main() -> std::io::Result<()> {
 ## Tests and further reading
 
 - Golden vectors: `testdata/z21/*.json`, `testdata/withrottle/*.json` (shared with Go)
-- Protocol unit tests in `rust/z21` and `rust/withrottle`
+- Protocol unit tests in `rust/z21`, `rust/withrottle`, and `rust/railcom`
 - Network interop (Rust protocol crate ↔ Go `Listen`): `make test-interop`
 - Protocol specifications: [`docs/protos/z21.md`](../protos/z21.md), [`docs/protos/withrottle.md`](../protos/withrottle.md), [`docs/protos/rcn-217.md`](../protos/rcn-217.md)
 - Architecture: [`ARCHITECTURE.md`](../../ARCHITECTURE.md)

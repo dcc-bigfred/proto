@@ -15,8 +15,13 @@ include = ["src/**", "Cargo.toml", "README.md", "LICENSE", "logo.png"]
 [lints]
 workspace = true
 
+[features]
+default = []
+railcom = ["dep:dcc-bigfred-proto-railcom"]
+
 [dependencies]
 heapless.workspace = true
+dcc-bigfred-proto-railcom = { workspace = true, optional = true }
 
 [dev-dependencies]
 serde = { version = "1", features = ["derive"] }

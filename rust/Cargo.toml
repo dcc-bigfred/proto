@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "z21",
     "withrottle",
+    "railcom",
     "z21-server",
     "withrottle-server",
     "loconet",
@@ -22,6 +23,7 @@ homepage = "https://github.com/dcc-bigfred/proto"
 heapless = { version = "0.8", default-features = false }
 dcc-bigfred-proto-z21 = { path = "z21" }
 dcc-bigfred-proto-withrottle = { path = "withrottle" }
+dcc-bigfred-proto-railcom = { path = "railcom" }
 
 [workspace.lints.rust]
 missing_docs = "warn"

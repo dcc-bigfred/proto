@@ -15,7 +15,7 @@ Go provides connected **clients** and test **servers** — documented on [pkg.go
 - **Unified drive API (Go)** — `Open(uri)` then `SetSpeed`, `GetSpeed`, `SendFn`, `ListFunctions`, `EmergencyStop`, CV read/write, optional track power and LocoNet slot management
 - **Three transports** — Z21 (UDP), LocoNet (serial / TCP), WiThrottle (TCP)
 - **LAN autodetection (Go)** — scan a /24 for Z21, WiThrottle, and LocoNet-over-TCP
-- **Protocol libraries** — frame encode/decode, checksums, WiThrottle line grammar; Rust crates are `no_std`, no `alloc`
+- **Protocol libraries** — frame encode/decode, checksums, WiThrottle line grammar, RailCom (RCN-217); Rust crates are `no_std`, no `alloc`
 - **Loopback servers (Go)** — Z21 UDP and WiThrottle TCP for tests and interop
 - **LocoNet gateway (Go)** — fan-out upstream bus to binary/ASCII TCP listeners
 - **Shared vectors** — `go run ./cmd/gen-vectors` writes `testdata/`; Go and Rust tests must match
@@ -36,6 +36,7 @@ Go provides connected **clients** and test **servers** — documented on [pkg.go
 | LocoNet `Station` client | ✅ | — | `Open("serial://…" / "loconet-tcp://…" / "lbserver://…")` |
 | LocoNet slot lifecycle | ✅ | — | Acquire, release, dispatch, steal |
 | CV programming | ✅ | ✅ | Go: `Station` ReadCV/WriteCV (Z21+LocoNet); Rust: Z21 encode/decode + address helpers |
+| RailCom (RCN-217) | — | ✅ | Rust: `dcc-bigfred-proto-railcom`; Z21 hook behind feature `railcom` |
 | Golden test vectors | ✅ | ✅ | Generated from Go |
 | Usage guides | ✅ | ✅ | See [docs/](docs/) below |
 
@@ -59,7 +60,7 @@ Go provides connected **clients** and test **servers** — documented on [pkg.go
 |----------|----------|
 | [Go module on pkg.go.dev](https://pkg.go.dev/github.com/dcc-bigfred/proto/go) | API reference for all Go packages |
 | [Go client guide](docs/go/README.md) | Connect, drive, functions, e-stop, track power |
-| [Rust protocol guide](docs/rust/README.md) | `no_std` Z21 / WiThrottle from firmware or `std::net` |
+| [Rust protocol guide](docs/rust/README.md) | `no_std` Z21 / WiThrottle / RailCom from firmware or `std::net` |
 | [Z21 LAN spec](docs/protos/z21.md) | Wire format reference |
 | [LocoNet spec](docs/protos/loconet.md) | Opcodes and framing |
 | [WiThrottle spec](docs/protos/withrottle.md) | Line protocol reference |
@@ -100,9 +101,10 @@ make -C rust test
 ```toml
 dcc-bigfred-proto-z21 = "0.1"
 dcc-bigfred-proto-withrottle = "0.1"
+dcc-bigfred-proto-railcom = "0.1"
 ```
 
-Path dependency: `dcc-bigfred-proto-z21`, `dcc-bigfred-proto-withrottle` under [`rust/`](rust/).
+Path dependency: `dcc-bigfred-proto-z21`, `dcc-bigfred-proto-withrottle`, `dcc-bigfred-proto-railcom` under [`rust/`](rust/).
 
 ## Releasing
 

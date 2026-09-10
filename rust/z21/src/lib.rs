@@ -2,9 +2,15 @@
 //!
 //! `no_std`, no `alloc`, no sockets. The host (LongFred firmware, or a `std`
 //! test) owns UDP.
+//!
+//! Optional feature `railcom`: parse `LAN_RAILCOM_DATACHANGED` through
+//! `dcc-bigfred-proto-railcom` and expose `Client::on_bytes_with_railcom`.
+//! Without the feature, `0x88` frames still yield [`Event::RailComLoco`].
 #![cfg_attr(not(test), no_std)]
 #![allow(missing_docs)]
 
+#[cfg(feature = "railcom")]
+use heapless::LinearMap;
 use heapless::Vec;
 
 /// Output buffer the firmware writes onto the UDP socket.
@@ -30,13 +36,37 @@ pub const HEADER_XBUS: u16 = 0x0040;
 pub const HEADER_SET_BROADCAST: u16 = 0x0050;
 /// LAN_SYSTEMSTATE_DATACHANGED (§2.5).
 pub const HEADER_SYSTEMSTATE: u16 = 0x0084;
-/// LAN_RAILCOM_DATACHANGED (§2.9).
+/// LAN_RAILCOM_DATACHANGED (§8.1).
 pub const HEADER_RAILCOM: u16 = 0x0088;
+/// LAN_RAILCOM_GETDATA (§8.2).
+pub const HEADER_RAILCOM_GETDATA: u16 = 0x0089;
 
 /// `CentralState` bit: programming mode active (§2.5, byte 16 bit 5).
 pub const CS_PROGRAMMING_MODE: u8 = 0x20;
 /// `RailCom` broadcast: at most this many unique loco addresses are tracked.
 pub const RAILCOM_ADDRS_MAX: usize = 8;
+/// Feature `railcom`: bounded per-loco parsers on [`Client`] (FIFO eviction when full).
+#[cfg(feature = "railcom")]
+pub const RAILCOM_LOCO_PARSERS_MAX: usize = 32;
+
+#[cfg(feature = "railcom")]
+pub use dcc_bigfred_proto_railcom::{LocoTelemetryData as RailComData, Parser as RailComParser};
+
+/// Broadcast flag: RailCom changes for subscribed locos (§2.16, `0x00000004`).
+#[cfg(feature = "railcom")]
+pub const BC_RAILCOM: u32 = 0x0000_0004;
+/// Broadcast flag: RailCom for all locos, PC software (§2.16, `0x00040000`).
+#[cfg(feature = "railcom")]
+pub const BC_RAILCOM_ALL: u32 = 0x0004_0000;
+/// LAN_RAILCOM_DATACHANGED Options: CH7 subindex 0 (speed 0–255).
+#[cfg(feature = "railcom")]
+pub const RCO_SPEED1: u8 = 0x01;
+/// LAN_RAILCOM_DATACHANGED Options: CH7 subindex 1 (speed 256+).
+#[cfg(feature = "railcom")]
+pub const RCO_SPEED2: u8 = 0x02;
+/// LAN_RAILCOM_DATACHANGED Options: CH7 subindex 7 (QoS).
+#[cfg(feature = "railcom")]
+pub const RCO_QOS: u8 = 0x04;
 
 /// XOR of all bytes. X-Bus trailing checksum is XOR so the payload plus
 /// checksum sums to 0.
@@ -171,6 +201,15 @@ pub fn encode_get_serial(out: &mut WireBuf) -> Result<(), Error> {
 /// LAN_SET_BROADCASTFLAGS.
 pub fn encode_broadcast_flags(out: &mut WireBuf, flags: u32) -> Result<(), Error> {
     put_lan(out, HEADER_SET_BROADCAST, &flags.to_le_bytes())
+}
+
+/// LAN_RAILCOM_GETDATA (§8.2). `typ` `0x01` = query `addr`; `addr` `0` = next loco.
+#[cfg(feature = "railcom")]
+pub fn encode_railcom_get_data(out: &mut WireBuf, typ: u8, addr: u16) -> Result<(), Error> {
+    let mut data = [0u8; 3];
+    data[0] = typ;
+    data[1..3].copy_from_slice(&addr.to_le_bytes());
+    put_lan(out, HEADER_RAILCOM_GETDATA, &data)
 }
 
 /// LAN_X_SET_LOCO_DRIVE. `steps` is 14/28/128 or proto nibble 0/2/3.
@@ -703,6 +742,53 @@ pub fn parse_railcom(pkt: &[u8]) -> Option<u16> {
     (addr != 0).then_some(addr)
 }
 
+/// Map a LAN `0x88` payload onto the RailCom parser (DYN 0/1/7 from Options).
+#[cfg(feature = "railcom")]
+fn ingest_lan_railcom(parser: &mut dcc_bigfred_proto_railcom::Parser, pkt: &[u8], addr: u16) {
+    let _ = parser.ingest(dcc_bigfred_proto_railcom::Update::Address(addr));
+    if pkt.len() < 16 {
+        return;
+    }
+    let options = pkt[13];
+    let speed = pkt[14];
+    let qos = pkt[15];
+    if options & RCO_SPEED2 != 0 {
+        let _ = parser.ingest(dcc_bigfred_proto_railcom::Update::Dyn {
+            subindex: 1,
+            value: speed,
+        });
+    } else if options & RCO_SPEED1 != 0 {
+        let _ = parser.ingest(dcc_bigfred_proto_railcom::Update::Dyn {
+            subindex: 0,
+            value: speed,
+        });
+    }
+    if options & RCO_QOS != 0 {
+        let _ = parser.ingest(dcc_bigfred_proto_railcom::Update::Dyn {
+            subindex: 7,
+            value: qos,
+        });
+    }
+}
+
+/// One [`dcc_bigfred_proto_railcom::Parser`] per locomotive address.
+#[cfg(feature = "railcom")]
+fn loco_parser(
+    map: &mut LinearMap<u16, dcc_bigfred_proto_railcom::Parser, RAILCOM_LOCO_PARSERS_MAX>,
+    addr: u16,
+) -> &mut dcc_bigfred_proto_railcom::Parser {
+    if map.get(&addr).is_none() {
+        if map.len() == map.capacity() {
+            let victim = map.keys().next().copied();
+            if let Some(victim) = victim {
+                map.remove(&victim);
+            }
+        }
+        let _ = map.insert(addr, dcc_bigfred_proto_railcom::Parser::new());
+    }
+    map.get_mut(&addr).expect("parser present after insert")
+}
+
 /// Parse a LAN_X_BC_TRACK_POWER_ON record (`61 01`).
 #[must_use]
 pub fn parse_track_power_on(pkt: &[u8]) -> bool {
@@ -715,12 +801,15 @@ pub fn parse_track_power_on(pkt: &[u8]) -> bool {
 
 /// Session-less client: firmware owns UDP.
 #[derive(Default)]
-pub struct Client;
+pub struct Client {
+    #[cfg(feature = "railcom")]
+    railcom: LinearMap<u16, dcc_bigfred_proto_railcom::Parser, RAILCOM_LOCO_PARSERS_MAX>,
+}
 
 impl Client {
     #[must_use]
     pub fn new() -> Self {
-        Self
+        Self::default()
     }
 
     /// Bytes to send after the UDP socket is ready (serial probe + broadcast flags).
@@ -731,7 +820,55 @@ impl Client {
     }
 
     /// Parse inbound datagrams.
+    ///
+    /// `LAN_RAILCOM_DATACHANGED` (`0x88`) always emits [`Event::RailComLoco`].
+    /// With the `railcom` feature, `on_bytes_with_railcom` also delivers the
+    /// assembled snapshot to a hook.
     pub fn on_bytes(&mut self, input: &[u8], emit: &mut dyn FnMut(Event)) {
+        #[cfg(feature = "railcom")]
+        self.on_bytes_with_railcom(input, emit, &mut |_| {});
+        #[cfg(not(feature = "railcom"))]
+        self.process_bytes(input, emit);
+    }
+
+    /// Like [`Self::on_bytes`], then calls `on_railcom` with that locomotive’s
+    /// assembled RailCom snapshot after each `LAN_RAILCOM_DATACHANGED` (`0x88`).
+    #[cfg(feature = "railcom")]
+    pub fn on_bytes_with_railcom(
+        &mut self,
+        input: &[u8],
+        emit: &mut dyn FnMut(Event),
+        on_railcom: &mut dyn FnMut(&RailComData),
+    ) {
+        self.process_bytes_railcom(input, emit, on_railcom);
+    }
+
+    #[cfg(not(feature = "railcom"))]
+    fn process_bytes(&mut self, input: &[u8], emit: &mut dyn FnMut(Event)) {
+        Self::dispatch(input, emit);
+    }
+
+    #[cfg(feature = "railcom")]
+    fn process_bytes_railcom(
+        &mut self,
+        input: &[u8],
+        emit: &mut dyn FnMut(Event),
+        on_railcom: &mut dyn FnMut(&RailComData),
+    ) {
+        let parsers = &mut self.railcom;
+        Self::dispatch(input, emit, &mut |pkt, addr| {
+            let parser = loco_parser(parsers, addr);
+            ingest_lan_railcom(parser, pkt, addr);
+            let snap = parser.snapshot();
+            on_railcom(&snap);
+        });
+    }
+
+    fn dispatch(
+        input: &[u8],
+        emit: &mut dyn FnMut(Event),
+        #[cfg(feature = "railcom")] on_rc: &mut dyn FnMut(&[u8], u16),
+    ) {
         let mut pkts: Vec<&[u8], 8> = Vec::new();
         split_datagram(input, &mut pkts);
         for pkt in pkts {
@@ -749,6 +886,8 @@ impl Client {
             }
             if let Some(addr) = parse_railcom(pkt) {
                 emit(Event::RailComLoco(addr));
+                #[cfg(feature = "railcom")]
+                on_rc(pkt, addr);
                 continue;
             }
             if parse_track_power_on(pkt) {
@@ -1155,5 +1294,90 @@ mod tests {
             got.iter().find(|e| matches!(e, Event::SystemState(_))),
             Some(Event::SystemState(s)) if s.prog_current_ma == 7
         ));
+    }
+
+    #[cfg(feature = "railcom")]
+    fn lan_railcom_frame(addr: u16, options: u8, speed: u8, qos: u8) -> [u8; 17] {
+        let mut pkt = [0u8; 17];
+        pkt[0] = 0x11;
+        pkt[2] = 0x88;
+        pkt[4..6].copy_from_slice(&addr.to_le_bytes());
+        pkt[13] = options;
+        pkt[14] = speed;
+        pkt[15] = qos;
+        pkt
+    }
+
+    #[cfg(feature = "railcom")]
+    #[test]
+    fn railcom_hook_maps_speed_and_qos() {
+        let pkt = lan_railcom_frame(13, RCO_SPEED1 | RCO_QOS, 80, 12);
+        let mut got_addr = None;
+        let mut snap = None;
+        Client::new().on_bytes_with_railcom(
+            &pkt,
+            &mut |ev| {
+                if let Event::RailComLoco(a) = ev {
+                    got_addr = Some(a);
+                }
+            },
+            &mut |d| snap = Some(*d),
+        );
+        assert_eq!(got_addr, Some(13));
+        let d = snap.expect("hook");
+        assert_eq!(d.address, Some(13));
+        assert_eq!(d.speed_kmh, Some(80));
+        assert_eq!(d.qos_percent, Some(12));
+    }
+
+    #[cfg(feature = "railcom")]
+    #[test]
+    fn railcom_hook_speed2_adds_256() {
+        let pkt = lan_railcom_frame(7, RCO_SPEED2, 10, 0);
+        let mut snap = None;
+        Client::new().on_bytes_with_railcom(&pkt, &mut |_| {}, &mut |d| snap = Some(*d));
+        assert_eq!(snap.unwrap().speed_kmh, Some(266));
+    }
+
+    #[cfg(feature = "railcom")]
+    #[test]
+    fn railcom_hook_is_per_loco() {
+        let mut cli = Client::new();
+        let mut snaps = std::vec::Vec::new();
+        cli.on_bytes_with_railcom(
+            &lan_railcom_frame(13, RCO_SPEED1, 80, 0),
+            &mut |_| {},
+            &mut |d| snaps.push(*d),
+        );
+        cli.on_bytes_with_railcom(
+            &lan_railcom_frame(7, RCO_QOS, 0, 12),
+            &mut |_| {},
+            &mut |d| snaps.push(*d),
+        );
+        assert_eq!(snaps.len(), 2);
+        assert_eq!(snaps[0].address, Some(13));
+        assert_eq!(snaps[0].speed_kmh, Some(80));
+        assert_eq!(snaps[0].qos_percent, None);
+        assert_eq!(snaps[1].address, Some(7));
+        assert_eq!(snaps[1].speed_kmh, None);
+        assert_eq!(snaps[1].qos_percent, Some(12));
+        let mut later = None;
+        cli.on_bytes_with_railcom(
+            &lan_railcom_frame(13, RCO_QOS, 0, 3),
+            &mut |_| {},
+            &mut |d| later = Some(*d),
+        );
+        let d = later.expect("loco 13");
+        assert_eq!(d.address, Some(13));
+        assert_eq!(d.speed_kmh, Some(80));
+        assert_eq!(d.qos_percent, Some(3));
+    }
+
+    #[cfg(feature = "railcom")]
+    #[test]
+    fn encode_railcom_get_data_frame() {
+        let mut out = WireBuf::new();
+        encode_railcom_get_data(&mut out, 0x01, 13).unwrap();
+        assert_eq!(&out[..], &[0x07, 0x00, 0x89, 0x00, 0x01, 13, 0x00]);
     }
 }

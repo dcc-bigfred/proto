@@ -29,6 +29,7 @@ proto/
     cmd/loopback-host/  # Go Listen for Rust interop tests
   rust/
     z21/  withrottle/   # CLIENT: no_std, no alloc, no sockets (LongFred)
+    railcom/            # RCN-217 parser; Z21 optional feature uses it
     z21-server/  withrottle-server/  loconet/  commandstation/  # std dummies
     interop/            # Rust client ↔ Go server loopback (Linux CI)
 ```
@@ -147,6 +148,11 @@ A virtual LocoNet command station (opcode → `DriveHost`, slot table) is a
 no `alloc`, no sockets. Shape matches LongFred adapters: `on_connect(out)`,
 `on_bytes(in, emit)`, `encode(cmd, out)` into `heapless` buffers. TCP/UDP stay
 in firmware (`embassy-net`).
+
+**RailCom `railcom`:** `#![no_std]` RCN-217 parser (4-of-8, DYN). Independent of
+LAN/serial. Z21 maps `LAN_RAILCOM_DATACHANGED` onto a **per-loco** parser only
+when built with `--features railcom`; the default client still emits address-only
+`Event::RailComLoco`.
 
 **No consumer yet → dummy `std` crates:** `z21-server`, `withrottle-server`,
 `loconet`, `commandstation`. Public API mirrors Go; implementation is the
