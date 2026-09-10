@@ -60,9 +60,10 @@ Go provides connected **clients** and test **servers** — documented on [pkg.go
 | [Go module on pkg.go.dev](https://pkg.go.dev/github.com/dcc-bigfred/proto/go) | API reference for all Go packages |
 | [Go client guide](docs/go/README.md) | Connect, drive, functions, e-stop, track power |
 | [Rust protocol guide](docs/rust/README.md) | `no_std` Z21 / WiThrottle from firmware or `std::net` |
-| [Z21 LAN spec](docs/z21.md) | Wire format reference |
-| [LocoNet spec](docs/loconet.md) | Opcodes and framing |
-| [WiThrottle spec](docs/withrottle.md) | Line protocol reference |
+| [Z21 LAN spec](docs/protos/z21.md) | Wire format reference |
+| [LocoNet spec](docs/protos/loconet.md) | Opcodes and framing |
+| [WiThrottle spec](docs/protos/withrottle.md) | Line protocol reference |
+| [RCN-217 RailCom](docs/protos/rcn-217.md) | DCC feedback protocol (English translation) |
 | [Architecture](ARCHITECTURE.md) | Repo layout, layers, equivalence |
 
 ## Consumers
@@ -71,6 +72,7 @@ This library exists for the rest of the [dcc-bigfred](https://github.com/dcc-big
 
 - **[BigFred](https://github.com/dcc-bigfred/bigfred)** — layout hub (Go). Connected `Station` clients over Z21, LocoNet, and WiThrottle ([commandstation](https://pkg.go.dev/github.com/dcc-bigfred/proto/go/pkgs/commandstation)).
 - **[BigFred Wizard](https://github.com/dcc-bigfred/bigfred-wizard)** — event-tablet helper (Rust). Talks Z21 LAN when programming handsets on the layout.
+- **[Programming Center](https://github.com/dcc-bigfred/programming-center)** - vendor independent decoder programming like a pro, right in your web browser.
 - **[LongFred](https://github.com/dcc-bigfred/longfred)** — wireless throttle firmware (Rust `no_std`). Encodes and decodes Z21 / WiThrottle on the device; the firmware owns sockets.
 
 ## Quick start

@@ -347,7 +347,7 @@ fn main() -> std::io::Result<()> {
 - Golden vectors: `testdata/z21/*.json`, `testdata/withrottle/*.json` (shared with Go)
 - Protocol unit tests in `rust/z21` and `rust/withrottle`
 - Network interop (Rust protocol crate ↔ Go `Listen`): `make test-interop`
-- Protocol specifications: [`docs/z21.md`](../z21.md), [`docs/withrottle.md`](../withrottle.md)
+- Protocol specifications: [`docs/protos/z21.md`](../protos/z21.md), [`docs/protos/withrottle.md`](../protos/withrottle.md), [`docs/protos/rcn-217.md`](../protos/rcn-217.md)
 - Architecture: [`ARCHITECTURE.md`](../../ARCHITECTURE.md)
 - Run crate tests: `make -C rust test` or `make test-rust` from the repository root
 - no_std builds: `make -C rust thumb` and `make -C rust build-risc`

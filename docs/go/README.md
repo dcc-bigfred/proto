@@ -298,6 +298,6 @@ On older Z21 firmware, also call `SubscribeLocoInfo(addr)` (`LocoInfoSubscriber`
 ## Tests and further reading
 
 - Integration tests in `go/pkgs/commandstation/*_test.go` and `go/pkgs/z21/roundtrip_test.go`
-- Protocol specifications: [`docs/z21.md`](../z21.md), [`docs/loconet.md`](../loconet.md), [`docs/withrottle.md`](../withrottle.md)
+- Protocol specifications: [`docs/protos/z21.md`](../protos/z21.md), [`docs/protos/loconet.md`](../protos/loconet.md), [`docs/protos/withrottle.md`](../protos/withrottle.md), [`docs/protos/rcn-217.md`](../protos/rcn-217.md)
 - Rust protocols (no sockets): [`docs/rust/README.md`](../rust/README.md)
 - Run tests: `make -C go test` or `make test-go` from the repository root

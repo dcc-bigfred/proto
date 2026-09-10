@@ -71,7 +71,7 @@ Handshake burst typically includes `Event::Protocol`, `Event::Heartbeat`, and `E
 ## Docs
 
 - [Rust protocol guide](https://github.com/dcc-bigfred/proto/blob/main/docs/rust/README.md)
-- [WiThrottle spec](https://github.com/dcc-bigfred/proto/blob/main/docs/withrottle.md)
+- [WiThrottle spec](https://github.com/dcc-bigfred/proto/blob/main/docs/protos/withrottle.md)
 - [pkg.go.dev](https://pkg.go.dev/github.com/dcc-bigfred/proto/go/pkgs/withrottle) — same protocol in Go
 
 ## Consumers

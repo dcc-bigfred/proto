@@ -79,7 +79,7 @@ sock.send(&hello)?;
 ## Docs
 
 - [Rust protocol guide](https://github.com/dcc-bigfred/proto/blob/main/docs/rust/README.md)
-- [Z21 LAN spec](https://github.com/dcc-bigfred/proto/blob/main/docs/z21.md)
+- [Z21 LAN spec](https://github.com/dcc-bigfred/proto/blob/main/docs/protos/z21.md)
 - [pkg.go.dev](https://pkg.go.dev/github.com/dcc-bigfred/proto/go/pkgs/z21) — same protocol in Go
 
 ## Consumers
