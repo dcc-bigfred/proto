@@ -238,7 +238,7 @@ sock.send(&out)?;
 
 ## RailCom
 
-[`dcc-bigfred-proto-railcom`](../../rust/railcom) parses **RCN-217** (4-of-8, datagrams, DYN) with no transport. One `Parser` is one decoder (MOB by default; `Parser::stationary` for accessory SRQ). Z21 LAN `LAN_RAILCOM_DATACHANGED` (`0x88`) is a decoded subset (address, speed, QoS), not cutout bytes. With the Z21 `railcom` feature, `Client` keeps a bounded map of per-loco parsers so snapshots do not mix fields across addresses.
+[`dcc-bigfred-proto-railcom`](../../rust/railcom) parses **RCN-217** (4-of-8, datagrams, DYN) with no transport. One `Parser` is one decoder (MOB by default; `Parser::stationary` for accessory SRQ). Z21 LAN `LAN_RAILCOM_DATACHANGED` (`0x88`) is a decoded subset (address, speed, QoS), not cutout bytes. Firmware sends `LocoAddress` high-byte first (DCC address, no `0xC0`); `LAN_RAILCOM_GETDATA` still uses little-endian as in §8.2. With the Z21 `railcom` feature, `Client` keeps a bounded map of per-loco parsers so snapshots do not mix fields across addresses.
 
 Without the Z21 crate feature, `Client::on_bytes` still emits only `Event::RailComLoco(addr)` — the cheap path used after an address write.
 

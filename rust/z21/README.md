@@ -66,7 +66,7 @@ out.clear();
 cli.encode(&z21::Command::TrackPower { on: true }, &mut out)?;
 ```
 
-Parse inbound datagrams with `on_bytes` (`Event::Serial`, `Event::LocoInfo`, `Event::CvResult` / `CvNack` / `CvNackSc`). Speed `0` is a normal stop; `1` is e-stop. CV/POM commands use 1-based NMRA numbers (`Command::CvRead`, `CvWrite`, `PomRead`, `PomWrite`). `LAN_RAILCOM_DATACHANGED` (`0x88`) yields `Event::RailComLoco(addr)` only. Full speed/QoS telemetry is behind the `railcom` feature (`on_bytes_with_railcom` + [`dcc-bigfred-proto-railcom`](../railcom)); that path keeps **one parser per locomotive** so fields do not leak between addresses.
+Parse inbound datagrams with `on_bytes` (`Event::Serial`, `Event::LocoInfo`, `Event::CvResult` / `CvNack` / `CvNackSc`). Speed `0` is a normal stop; `1` is e-stop. CV/POM commands use 1-based NMRA numbers (`Command::CvRead`, `CvWrite`, `PomRead`, `PomWrite`). `LAN_RAILCOM_DATACHANGED` (`0x88`) yields `Event::RailComLoco(addr)` only; `LocoAddress` is high-byte first on the wire. Full speed/QoS telemetry is behind the `railcom` feature (`on_bytes_with_railcom` + [`dcc-bigfred-proto-railcom`](../railcom)); that path keeps **one parser per locomotive** so fields do not leak between addresses.
 
 UDP sketch (`std`):
 

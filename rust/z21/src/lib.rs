@@ -729,6 +729,10 @@ pub fn parse_system_state(pkt: &[u8]) -> Option<SystemState> {
 }
 
 /// Parse a LAN_RAILCOM_DATACHANGED record into its loco address.
+///
+/// Printed spec §8.1 calls `LocoAddress` a little-endian UINT16. Firmware
+/// sends the DCC address **high byte first**, without X-Bus `0xC0`: `26 02`
+/// is 9730, not 550. `LAN_RAILCOM_GETDATA` stays little-endian (§8.2).
 #[must_use]
 pub fn parse_railcom(pkt: &[u8]) -> Option<u16> {
     if pkt.len() < 6 || !valid_frame(pkt) {
@@ -738,7 +742,7 @@ pub fn parse_railcom(pkt: &[u8]) -> Option<u16> {
     if header != HEADER_RAILCOM {
         return None;
     }
-    let addr = u16::from_le_bytes([pkt[4], pkt[5]]);
+    let addr = u16::from_be_bytes([pkt[4], pkt[5]]);
     (addr != 0).then_some(addr)
 }
 
@@ -1250,9 +1254,20 @@ mod tests {
         let mut pkt = [0u8; 17];
         pkt[0] = 0x11;
         pkt[2] = 0x88;
-        pkt[4] = 13;
-        pkt[5] = 0;
+        pkt[4..6].copy_from_slice(&13u16.to_be_bytes());
         assert_eq!(parse_railcom(&pkt), Some(13));
+    }
+
+    #[test]
+    fn parse_railcom_address_is_high_byte_first() {
+        // Live Z21 `0x88` for loco 9730 (`want=9730`): `26 02` is 0x2602, not LE 550.
+        let mut pkt = [0u8; 17];
+        pkt[0] = 0x11;
+        pkt[2] = 0x88;
+        pkt[4] = 0x26;
+        pkt[5] = 0x02;
+        assert_eq!(parse_railcom(&pkt), Some(9730));
+        assert_ne!(parse_railcom(&pkt), Some(550));
     }
 
     #[test]
@@ -1278,7 +1293,7 @@ mod tests {
         let mut railcom = [0u8; 17];
         railcom[0] = 0x11;
         railcom[2] = 0x88;
-        railcom[4] = 13;
+        railcom[4..6].copy_from_slice(&13u16.to_be_bytes());
         let mut sys = [0u8; 20];
         sys[0] = 0x14;
         sys[2] = 0x84;
@@ -1301,7 +1316,7 @@ mod tests {
         let mut pkt = [0u8; 17];
         pkt[0] = 0x11;
         pkt[2] = 0x88;
-        pkt[4..6].copy_from_slice(&addr.to_le_bytes());
+        pkt[4..6].copy_from_slice(&addr.to_be_bytes());
         pkt[13] = options;
         pkt[14] = speed;
         pkt[15] = qos;
